@@ -94,8 +94,8 @@ class Controls:
       ignore = ['driverCameraState', 'managerState'] if SIMULATION else None
       self.sm = messaging.SubMaster(['deviceState', 'pandaState', 'modelV2', 'liveCalibration',
                                      'driverMonitoringState', 'longitudinalPlan', 'lateralPlan', 'liveLocationKalman',
-                                     'managerState', 'liveParameters', 'radarState'] + self.camera_packets + joystick_packet,
-                                     ignore_alive=ignore, ignore_avg_freq=['radarState', 'longitudinalPlan'])
+                                     'managerState', 'liveParameters', 'radarState', 'gpsLocationExternal'] + self.camera_packets + joystick_packet,
+                                     ignore_alive=ignore, ignore_avg_freq=['radarState', 'longitudinalPlan', 'gpsLocationExternal'])
 
     self.can_sock = can_sock
     if can_sock is None:
@@ -436,6 +436,8 @@ class Controls:
       vEgo = getattr(CS, "vEgo", None)
       vEgo = int(round((float(vEgo) * 3.6 if self.is_metric else int(round((float(vEgo) * 3.6 * 0.6233 + 0.0995)))))) if vEgo else v_cruise
       
+      if self.sm.updated['gpsLocationExternal']:
+        self.CI.CS.altitude = self.sm['gpsLocationExternal'].altitude
       if self.sm.updated['lateralPlan'] and len(self.sm['lateralPlan'].curvatures) > 0:
         self.CI.CC.params.future_curvature = mean(self.sm['lateralPlan'].curvatures)
       
