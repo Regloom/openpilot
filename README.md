@@ -1,15 +1,27 @@
 # Table of Contents
 ------
-* [Appreciate my work?](#appreciate-my-work)
-* [Infographics](#infographics)
-* [Fork Details](#fork-details)
-  * [Current Fork Features](#current-fork-features---optional-via-toggle)
-  * [Planned Fork Features](#planned-fork-features-in-no-particular-order)
-  * [Supported Hardware](#supported-hardware)
-  * [Installation Instructions](#installation-instructions)
-  * [Automatic Updates](#automatic-updates)
-  * [Tuning](#tuning)
-* [Commaai Table of Contents](#commaai-table-of-contents)
+- [Table of Contents](#table-of-contents)
+    - [Infographics](#infographics)
+    - [Appreciate My Work?](#appreciate-my-work)
+- [Fork Details](#fork-details)
+      - [Current Fork Features \[✅ = optional via toggle\]:](#current-fork-features---optional-via-toggle)
+      - [Planned Fork Features (in no particular order):](#planned-fork-features-in-no-particular-order)
+    - [Supported Hardware](#supported-hardware)
+    - [Installation Instructions](#installation-instructions)
+      - [Easy: using sshane's openpilot-installer-generator](#easy-using-sshanes-openpilot-installer-generator)
+      - [Less easy](#less-easy)
+    - [Automatic Updates](#automatic-updates)
+    - [Tuning](#tuning)
+      - [Lateral Tuning](#lateral-tuning)
+- [Commaai Table of Contents](#commaai-table-of-contents)
+  - [What is openpilot?](#what-is-openpilot)
+  - [Running in a car](#running-in-a-car)
+  - [Running on PC](#running-on-pc)
+  - [Community and Contributing](#community-and-contributing)
+  - [User Data and comma Account](#user-data-and-comma-account)
+  - [Safety and Testing](#safety-and-testing)
+  - [Directory Structure](#directory-structure)
+  - [Licensing](#licensing)
 
 ### Infographics
 ------
@@ -76,13 +88,12 @@ Please show your support by contributing to the ongoing development of this proj
 - [x] [✅] Adjustable lane position using onscreen buttons
     * Tap buttons to change lane position for 1/3 mile; double-tap to change for 10 miles
     * Tap again to go back to center position
-- [x] Automatic lane position: if adjacent traffic on one side and not the other, assume opposite lane position; or if in right lane, assume right position, or left position if in left lane.
+- [x] Automatic lane position: if adjacent traffic on one side and not the other, assume opposite lane position
     * To activate, enable adjustable lane position, then while onroad, tap left then right (or right then left) lane position button within 2s.
     * Tap either button to deactivate
-    * Requires clear lanelines, and a straight road
+    * Requires clear lanelines, and a mostly-straight road
 - [x] [✅] Automatic automatic lane position (you heard me)
-    * Turns on automatic lane positioning automatically when on interstate or state highway at 40mph+ with clear lanelines, or
-    * when at 22mph+ with clear lanelines and adjacent traffic is present
+    * Turns on automatic lane positioning automatically when at 22mph+ with clear lanelines and adjacent traffic is present
 - [x] [GM] [✅] Dynamic follow mode (WIP)
 - [x] [GM] Toggle steering with LKAS button (wheel color changes to indicate disengagement)
 - [x] [GM] One-pedal driving a.k.a. autosteering only a.k.a. toggle longitudinal control: using regen (volt) and/or light/moderate/heavy braking, control OP all the way to a stop, without a lead, and without disengaging, with just the gas pedal (see below) (application of friction brakes originally suggested by cybertronicify — 10/06/2021)
@@ -128,8 +139,8 @@ Please show your support by contributing to the ongoing development of this proj
         * Tap any metric to cycle its content (sorry for all the god-forsaken tapping, a better metric display with vehicle, following, position, and device widgets is a WIP)
     * Metrics (79 to choose from):
         * Device info: CPU temperature (°C and °F), CPU percent, CPU temp + percent (°C and °F), memory temperature (°C and °F), memory used, free storage, ambient temperature (°C and °F), fanspeed (as percent of max), GPS accuracy (and number of satelites), altitude
-        * Vehicle info: Engine RPM, engine coolant temperature (°C and °F), engine RPM + coolant temperature (°C and °F), steering torque, steering angle, desired steering angle, vehicle acceleration, vehicle jerk, percent grade of current road (one based on GPS, one based on device accelerometer), Volt high-voltage battery wattage [kW], voltage [V], current [A], voltage+wattage, drag force/power, brake force/power, regen force/power, electric motor force/power, gas engine power, total acceleration force/power, EV efficiency (instantaneous, 5 mile average, total), EV power consumption (instant/5mi/total), EV instantaneous efficiency/consumption (depending on sign), EV drivetrain efficiency (amount of power making it to the tires),  
-        * Lead-following info: follow distance level, lead distance [length], desired lead distance [length], lead distance [time], desired lead distance [time], follow distance and acceleration mpc costs [in units of the stock OP costs; i.e. 2.5 means 2.5× the stock OP value], relative lead velocity, absolute lead velocity
+        * Vehicle info: Time since driver interaction, time since driver intervention, time since driver distraction, Engine RPM, engine coolant temperature (°C and °F), engine RPM + coolant temperature (°C and °F), steering torque, steering angle, desired steering angle, vehicle acceleration, vehicle jerk, lane width, distance from lane center, percent grade of current road (one based on GPS, one based on device accelerometer), Volt high-voltage battery wattage [kW], voltage [V], current [A], voltage+wattage, drag force/power, brake force/power, regen force/power, electric motor force/power, gas engine power, total acceleration force/power, EV efficiency (instantaneous, 5 mile average, total), EV power consumption (instant/5mi/total), EV instantaneous efficiency/consumption (depending on sign), EV drivetrain efficiency (amount of power making it to the tires),  
+        * Lead/traffic info: follow distance level, lead distance [length], desired lead distance [length], lead distance [time], desired lead distance [time], follow distance and acceleration mpc costs [in units of the stock OP costs; i.e. 2.5 means 2.5× the stock OP value], relative lead velocity, absolute lead velocity, number of cars (total, ongoing, oncoming, stopped, ongoing in adjacent lanes), minimum follow distance of ongoing cars in adjacent lanes
         * ...and others
 - [x] [GM] [✅] **One-pedal driving**: OP will apply light to heavy braking when you let completely off the gas, allowing you to come to a full stop and resume without OP disengaging
     * **Not necessary to enable the one-pedal toggle; you engage/disengage while driving**
@@ -245,6 +256,19 @@ If you're device stays connected to your car all the time, you'll be presented w
 Commaai Table of Contents
 =======================
 
+- [Table of Contents](#table-of-contents)
+    - [Infographics](#infographics)
+    - [Appreciate My Work?](#appreciate-my-work)
+- [Fork Details](#fork-details)
+      - [Current Fork Features \[✅ = optional via toggle\]:](#current-fork-features---optional-via-toggle)
+      - [Planned Fork Features (in no particular order):](#planned-fork-features-in-no-particular-order)
+    - [Supported Hardware](#supported-hardware)
+    - [Installation Instructions](#installation-instructions)
+      - [Easy: using sshane's openpilot-installer-generator](#easy-using-sshanes-openpilot-installer-generator)
+      - [Less easy](#less-easy)
+    - [Automatic Updates](#automatic-updates)
+    - [Tuning](#tuning)
+      - [Lateral Tuning](#lateral-tuning)
 - [Commaai Table of Contents](#commaai-table-of-contents)
   - [What is openpilot?](#what-is-openpilot)
   - [Running in a car](#running-in-a-car)

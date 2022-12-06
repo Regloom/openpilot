@@ -1,4 +1,24 @@
-Version tw-0.8.12-9_tws (2022-10-27)
+Version tw-0.8.12-10_tws (2022-11-22)
+========================
+  * Dynamic follow mode:
+    * should work now!
+    * now uses cut-ins **and adjacent traffic** to change (continuously) between close/medium/far follow 
+      * traffic-based dynamic follow requires extended radar capabilities
+  * Smoother application of curve braking
+  * Auto lane position: 
+    * various improvements
+    * exclusively uses traffic to run (no more use of laneline presence)
+  * New UI metrics:
+    * time since driver intervention (gas, brake, or steering)
+    * time since driver interaction (intervention, screen tap, blinker, cruise speed adjust, follow distance adjust)
+    * time simce driver distraction
+    * distance from lane center
+    * number of cars being tracked by radar/long range vision (oncoming/ongoing/stopped/total/ongoing adjacent lane)
+    * minimum separation between ongoing adjacent traffic (in seconds)
+  * Print bearing above current speed (next to street name)
+  * [Volt] Improved "torque" lateral control
+
+Version tw-0.8.12-8_twd (2022-09-29)
 ========================
  * NEW: [toggle] Extended radar capabilities
    * (VERY ALPHA) brake for lead+1 car (the car in front of the lead)
