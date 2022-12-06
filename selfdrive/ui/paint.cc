@@ -280,7 +280,7 @@ static void draw_lead(UIState *s, float d_rel, float v_rel, const vertex_data &v
       nvgText(s->vg,lead_x-x_offset,lead_y-y_offset,val,NULL);
 
       // then length distance
-      if (s->is_metric){
+      if (s->scene.is_metric){
         snprintf(unit, sizeof(unit), "m"); 
         if (s->scene.lead_d_rel < 10.){
           snprintf(val, sizeof(val), "%.1f%s", s->scene.lead_d_rel, unit);
@@ -305,8 +305,8 @@ static void draw_lead(UIState *s, float d_rel, float v_rel, const vertex_data &v
 
       nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
       // first abs speed
-      if (s->is_metric){
-        snprintf(unit, sizeof(unit), "kph"); 
+      if (s->scene.is_metric){
+        snprintf(unit, sizeof(unit), "km/h"); 
         float v = (s->scene.lead_v * 3.6);
         if (v < 100.){
           snprintf(val, sizeof(val), "%.1f", v);
@@ -328,7 +328,7 @@ static void draw_lead(UIState *s, float d_rel, float v_rel, const vertex_data &v
       nvgText(s->vg,lead_x+x_offset,lead_y-(y_offset*1.3),val,NULL);
 
       // then relative speed
-      if (s->is_metric) {
+      if (s->scene.is_metric) {
           snprintf(val, sizeof(val), "%s%.1f", s->scene.lead_v_rel >= 0. ? "+" : "", (s->scene.lead_v_rel * 3.6));
       } else {
           snprintf(val, sizeof(val), "%s%.1f", s->scene.lead_v_rel >= 0. ? "+" : "", (s->scene.lead_v_rel * 2.2374144));
@@ -343,7 +343,7 @@ static void draw_lead(UIState *s, float d_rel, float v_rel, const vertex_data &v
       nvgBeginPath(s->vg);
       nvgFontSize(s->vg, 90);
       char val[16];
-      float v = (s->scene.lead_v * (s->is_metric ? 3.6 : 2.2374144));
+      float v = (s->scene.lead_v * (s->scene.is_metric ? 3.6 : 2.2374144));
       if (v < 100.){
         snprintf(val, sizeof(val), "%.1f", v);
       }
@@ -398,7 +398,7 @@ static void draw_other_leads(UIState *s, bool lead_drawn) {
         nvgTextAlign(s->vg, NVG_ALIGN_MIDDLE | NVG_ALIGN_CENTER);
         nvgFillColor(s->vg, COLOR_WHITE_ALPHA(s->scene.lead_info_print_enabled ? alpha_stroke : alpha_text));
         char val[16];
-        snprintf(val, sizeof(val), "%.0f", v * (s->is_metric ? 3.6 : 2.2374144));
+        snprintf(val, sizeof(val), "%.0f", v * (s->scene.is_metric ? 3.6 : 2.2374144));
         nvgText(s->vg,x,y,val,NULL);
       }
       i++;
@@ -437,7 +437,7 @@ static void draw_other_leads(UIState *s, bool lead_drawn) {
         nvgTextAlign(s->vg, NVG_ALIGN_MIDDLE | NVG_ALIGN_CENTER);
         nvgFillColor(s->vg, COLOR_WHITE_ALPHA(s->scene.lead_info_print_enabled ? alpha_stroke : alpha_text));
         char val[16];
-        snprintf(val, sizeof(val), "%.0f", v * (s->is_metric ? 3.6 : 2.2374144));
+        snprintf(val, sizeof(val), "%.0f", v * (s->scene.is_metric ? 3.6 : 2.2374144));
         nvgText(s->vg,x,y,val,NULL);
       }
       i++;
@@ -476,7 +476,7 @@ static void draw_other_leads(UIState *s, bool lead_drawn) {
         nvgTextAlign(s->vg, NVG_ALIGN_MIDDLE | NVG_ALIGN_CENTER);
         nvgFillColor(s->vg, COLOR_WHITE_ALPHA(s->scene.lead_info_print_enabled ? alpha_stroke : alpha_text));
         char val[16];
-        snprintf(val, sizeof(val), "%.0f", v * (s->is_metric ? 3.6 : 2.2374144));
+        snprintf(val, sizeof(val), "%.0f", v * (s->scene.is_metric ? 3.6 : 2.2374144));
         nvgText(s->vg,x,y,val,NULL);
       }
       i++;
@@ -1233,7 +1233,7 @@ static void ui_draw_measures(UIState *s){
             snprintf(name, sizeof(name), "ELEVATION");
             if (scene.gpsAccuracyUblox != 0.00) {
               float tmp_val;
-              if (s->is_metric) {
+              if (s->scene.is_metric) {
                 tmp_val = scene.altitudeUblox;
                 snprintf(val, sizeof(val), "%.0f", scene.altitudeUblox);
                 snprintf(unit, sizeof(unit), "m");
@@ -1750,7 +1750,7 @@ static void ui_draw_measures(UIState *s){
             {
               snprintf(name, sizeof(name), "REL DIST");
               if (scene.lead_status) {
-                if (s->is_metric) {
+                if (s->scene.is_metric) {
                   g = 0;
                   b = 0;
                   p = 0.0333 * scene.lead_d_rel;
@@ -1776,7 +1776,7 @@ static void ui_draw_measures(UIState *s){
               } else {
                 snprintf(val, sizeof(val), "-");
               }
-              if (s->is_metric) {
+              if (s->scene.is_metric) {
                 snprintf(unit, sizeof(unit), "m");
               }
               else{
@@ -1790,7 +1790,7 @@ static void ui_draw_measures(UIState *s){
               snprintf(name, sizeof(name), "REL:DES DIST");
               auto follow_d = scene.desiredFollowDistance * scene.car_state.getVEgo() + scene.stoppingDistance;
               if (scene.lead_status) {
-                if (s->is_metric) {
+                if (s->scene.is_metric) {
                   g = 0;
                   b = 0;
                   p = 0.0333 * scene.lead_d_rel;
@@ -1815,7 +1815,7 @@ static void ui_draw_measures(UIState *s){
               } else {
                 snprintf(val, sizeof(val), "-");
               }
-              if (s->is_metric) {
+              if (s->scene.is_metric) {
                 snprintf(unit, sizeof(unit), "m");
               }
               else{
@@ -1889,7 +1889,7 @@ static void ui_draw_measures(UIState *s){
               b = (b >= 0 ? (b <= 255 ? b : 255) : 0);
               val_color = nvgRGBA(255, g, b, 200);
               // lead car relative speed is always in meters
-              if (s->is_metric) {
+              if (s->scene.is_metric) {
                 snprintf(val, sizeof(val), "%.1f", (scene.lead_v_rel * 3.6));
               } else {
                 snprintf(val, sizeof(val), "%.1f", (scene.lead_v_rel * 2.2374144));
@@ -1897,7 +1897,7 @@ static void ui_draw_measures(UIState *s){
             } else {
               snprintf(val, sizeof(val), "-");
             }
-            if (s->is_metric) {
+            if (s->scene.is_metric) {
               snprintf(unit, sizeof(unit), "km/h");;
             } else {
               snprintf(unit, sizeof(unit), "mph");
@@ -1908,7 +1908,7 @@ static void ui_draw_measures(UIState *s){
             {
             snprintf(name, sizeof(name), "LEAD SPD");
             if (scene.lead_status) {
-              if (s->is_metric) {
+              if (s->scene.is_metric) {
                 float v = (scene.lead_v * 3.6);
                 if (v < 100.){
                   snprintf(val, sizeof(val), "%.1f", v);
@@ -1928,7 +1928,7 @@ static void ui_draw_measures(UIState *s){
             } else {
               snprintf(val, sizeof(val), "-");
             }
-            if (s->is_metric) {
+            if (s->scene.is_metric) {
               snprintf(unit, sizeof(unit), "km/h");;
             } else {
               snprintf(unit, sizeof(unit), "mph");
@@ -2575,7 +2575,7 @@ static void ui_draw_measures(UIState *s){
           case UIMeasure::LANE_WIDTH: 
             {
               snprintf(name, sizeof(name), "LANE W");
-              if (s->is_metric){
+              if (s->scene.is_metric){
                 snprintf(unit, sizeof(unit), "m");
                 snprintf(val, sizeof(val), "%.1f", scene.lateralPlan.laneWidth);
               }
@@ -2589,7 +2589,7 @@ static void ui_draw_measures(UIState *s){
           case UIMeasure::LANE_DIST_FROM_CENTER: 
             {
               snprintf(name, sizeof(name), "LANE CENTER");
-              if (s->is_metric){
+              if (s->scene.is_metric){
                 snprintf(unit, sizeof(unit), "m");
                 snprintf(val, sizeof(val), "%.1f", scene.lateralPlan.laneCenter);
               }
