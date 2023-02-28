@@ -1,6 +1,8 @@
 from cereal import car
+from common.filter_simple import FirstOrderFilter
+from common.op_params import opParams
 from common.numpy_fast import clip, interp
-from common.realtime import DT_MDL
+from common.realtime import DT_MDL, DT_CTRL
 from common.params import Params
 from selfdrive.config import Conversions as CV
 from selfdrive.modeld.constants import T_IDXS
@@ -11,7 +13,6 @@ V_CRUISE_MAX = 145
 V_CRUISE_MIN = 1
 V_CRUISE_DELTA = 5
 V_CRUISE_OFFSET = 3
-V_CRUISE_OFFSET_DEFAULT = 3
 V_CRUISE_ENABLE_MIN = 5
 LAT_MPC_N = 16
 LON_MPC_N = 32
@@ -59,12 +60,43 @@ def rate_limit(new_value, last_value, dw_step, up_step):
 def get_steer_max(CP, v_ego):
   return interp(v_ego, CP.steerMaxBP, CP.steerMaxV)
 
-def set_v_cruise_offset(do_offset):
-  global V_CRUISE_OFFSET
-  if do_offset:
-    V_CRUISE_OFFSET = V_CRUISE_OFFSET_DEFAULT
+class ClusterSpeed:
+  def __init__(self, is_metric):
+    self._op_params = opParams(calling_function='drive_helpers.py ClusterSpeed')
+    self.v_ego = FirstOrderFilter(0.0, self._op_params.get('MISC_cluster_speed_smoothing_factor', force_update=True), DT_CTRL)
+    self.deadzone = self._op_params.get('MISC_cluster_speed_deadzone', force_update=True)
+    self.is_metric = is_metric
+    self.cluster_speed_last = 0
+    self.frame = 0
+  
+  def update(self, v_ego, do_reset=False):
+    if self.frame > 350:
+      self.frame = 0
+      self.v_ego.update_alpha(self._op_params.get('MISC_cluster_speed_smoothing_factor'))
+      self.deadzone = self._op_params.get('MISC_cluster_speed_deadzone')
+    self.frame += 1
+      
+    if do_reset:
+      self.v_ego.x = v_ego
+    else:
+      self.v_ego.update(v_ego)
+      
+    out = max(self.v_ego.x * (CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH), 0.0)
+    if do_reset or out < 0.5 - self.deadzone or abs(out - self.cluster_speed_last) > 1.0 + self.deadzone:
+      self.cluster_speed_last = int(round(out))
+    
+    return int(self.cluster_speed_last)
+      
+def get_cluster_speed(v_ego, cluster_speed_last, is_metric):
+  out = v_ego * (CV.MS_TO_KPH if is_metric else CV.MS_TO_MPH)
+  if abs(out - cluster_speed_last) > 1.25:
+    return int(round(out))
   else:
-    V_CRUISE_OFFSET = 0
+    return cluster_speed_last
+
+def set_v_cruise_offset(offset):
+  global V_CRUISE_OFFSET
+  V_CRUISE_OFFSET = offset
 
 def update_v_cruise(v_cruise_kph, buttonEvents, enabled, cur_time, accel_pressed,decel_pressed,accel_pressed_last,decel_pressed_last, fastMode, stock_speed_adjust, vEgo_kph, gas_pressed):
   

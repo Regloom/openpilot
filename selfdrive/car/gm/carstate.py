@@ -1,5 +1,6 @@
 from cereal import car
 from common.filter_simple import FirstOrderFilter
+from common.op_params import opParams, UI_METRICS
 from common.params import Params, put_nonblocking
 from common.numpy_fast import mean, interp, clip
 from common.realtime import sec_since_boot, DT_CTRL
@@ -10,7 +11,7 @@ from opendbc.can.parser import CANParser
 from selfdrive.car.interfaces import CarStateBase
 from selfdrive.car.gm.values import DBC, CAR, AccState, CanBus, \
                                     CruiseButtons, STEER_THRESHOLD, CarControllerParams
-from selfdrive.controls.lib.drive_helpers import set_v_cruise_offset
+from selfdrive.controls.lib.drive_helpers import set_v_cruise_offset, ClusterSpeed
 from selfdrive.controls.lib.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
 from selfdrive.swaglog import cloudlog
 
@@ -25,24 +26,22 @@ ROLLING_RESISTANCE_FROM_VEGO_BP = [3., 16., 28., 39.] # [m/s] using plot at http
 # EV_ICE_INPUT_EFFICIENCY = 1/0.88
 # EV_DRIVE_EFFICIENCY = 1/0.82
 
+GAS_PRESSED_THRESHOLD = 0.15
+
 GearShifter = car.CarState.GearShifter
 class GEAR_SHIFTER2:
+  IN_BETWEEN_PARK_AND_REVERSE = 0
+  PARK = 1
+  REVERSE = 2
+  NEUTRAL = 3
   DRIVE = 4
+  REGEN_PADDLE_DRIVE = 5
   LOW = 6
+  REGEN_PADDLE_LOW = 7
   
 def ev_regen_accel(v_ego, ice_on):
   gas_brake_threshold = interp(v_ego, CarControllerParams.EV_GAS_BRAKE_THRESHOLD_BP, CarControllerParams.EV_GAS_BRAKE_THRESHOLD_ICE_V if ice_on else CarControllerParams.EV_GAS_BRAKE_THRESHOLD_V)
   return gas_brake_threshold
-
-def get_chassis_can_parser(CP, canbus):
-  # this function generates lists for signal, messages and initial values
-  signals = [
-      # sig_name, sig_address, default
-      ("FrictionBrakePressure", "EBCMFrictionBrakeStatus", 0),
-  ]
-
-  return CANParser(DBC[CP.carFingerprint]['chassis'], signals, [], canbus.chassis)
-  
 
 class CarState(CarStateBase):
   def __init__(self, CP):
@@ -50,6 +49,13 @@ class CarState(CarStateBase):
     can_define = CANDefine(DBC[CP.carFingerprint]["pt"])
     self.shifter_values = can_define.dv["ECMPRDNL"]["PRNDL"]
     self._params = Params()
+    self._op_params = opParams("gm CarState")
+    self.hvb_wattage = FirstOrderFilter(0.0, self._op_params.get('MET_power_meter_smoothing_factor'), DT_CTRL) # [kW]
+    self.ui_metrics_params = [int(self._params.get(f'MeasureSlot{i:02d}', encoding="utf8")) for i in range(10)]
+    self.update_op_params()
+    
+    self.gear_shifter = 'park'
+    self.cluster_speed = ClusterSpeed(is_metric=self._params.get_bool("IsMetric"))
     
     self.iter = 0
     self.uiframe = 5
@@ -80,19 +86,25 @@ class CarState(CarStateBase):
     self.is_ev = (self.car_fingerprint in [CAR.VOLT, CAR.VOLT18])
     self.do_sng = (self.car_fingerprint in [CAR.VOLT])
     
+    self.sessionInitTime = sec_since_boot()
     self.prev_distance_button = 0
     self.prev_lka_button = 0
     self.lka_button = 0
     self.distance_button = 0
     self.distance_button_last_press_t = 0.
     self.follow_level = int(self._params.get("FollowLevel", encoding="utf8"))
-    self.lkMode = True
-    set_v_cruise_offset(self._params.get_bool("CruiseSpeedOffset"))
+    self.follow_level_change_last_t = self.sessionInitTime
+    self.lkaEnabled = True
+    self.cruise_offset_enabled = self._params.get_bool("CruiseSpeedOffset")
+    set_v_cruise_offset(self._op_params.get('MISC_set_speed_offset_mph', force_update=True) if self.cruise_offset_enabled else 0)
     self.autoHold = self._params.get_bool("GMAutoHold")
-    self.disengage_on_gas = not self._params.get_bool("DisableDisengageOnGas")
+    self.MADS_enabled = self._params.get_bool("MADSEnabled")
+    self.disengage_on_gas = not self.MADS_enabled and not Params().get_bool("DisableDisengageOnGas")
     self.autoHoldActive = False
     self.autoHoldActivated = False
-    self.regenPaddlePressed = False
+    self.regen_paddle_pressed = False
+    self.regen_paddle_pressed_last_t = 0.0
+    self.regen_paddle_released_last_t = 0.0
     self.cruiseMain = False
     self.cruise_enabled_last_t = 0.
     self.cruise_enabled_last = False
@@ -100,62 +112,48 @@ class CarState(CarStateBase):
     self.cruise_enabled_neg_accel_ramp_v = [0., 1.]
     self.engineRPM = 0
     self.lastAutoHoldTime = 0.0
-    self.sessionInitTime = sec_since_boot()
+    self.time_in_drive_autohold = 0.0
+    self.time_in_drive_one_pedal = 0.0
+    self.MADS_long_min_time_in_drive = 3.0 # [s]
     self.params_check_last_t = 0.
-    self.params_check_freq = 0.1 # check params at 10Hz
+    self.params_check_freq = 0.25 # check params at 10Hz
     
     self.resume_button_pressed = False
     self.resume_required = False
     
-    self.accel_mode = int(self._params.get("AccelMode", encoding="utf8"))  # 0 = normal, 1 = sport; 2 = eco; 3 = creep
+    self.accel_mode = int(self._params.get("AccelMode", encoding="utf8"))  # 0 = normal, 1 = sport; 2 = eco
+    self.accel_mode_change_last_t = self.sessionInitTime
     
-    self.coasting_enabled = self._params.get_bool("Coasting")
+    self.coasting_allowed = self._params.get_bool("Coasting")
+    self.coasting_enabled = self.coasting_allowed and self._params.get_bool("CoastingActive")
     self.coasting_dl_enabled = self.is_ev and self._params.get_bool("CoastingDL")
     self.coasting_enabled_last = self.coasting_enabled
     self.no_friction_braking = self._params.get_bool("RegenBraking")
     self.coasting_brake_over_speed_enabled = self._params.get_bool("CoastingBrakeOverSpeed")
-    self.coasting_over_speed_vEgo_BP = [[1.3, 1.2], [1.35, 1.25]]
-    self.coasting_over_speed_regen_vEgo_BP = [[1.20, 1.10], [1.25, 1.15]]
+    base_BP = [self._op_params.get('MISC_coasting_low_speed_over', force_update=True), self._op_params.get('MISC_coasting_high_speed_over', force_update=True)]
+    self.coasting_over_speed_vEgo_BP = [[i + 0.1 for i in base_BP], [i + 0.15 for i in base_BP]]
+    self.coasting_over_speed_regen_vEgo_BP = [base_BP, [i + 0.05 for i in base_BP]]
     self.coasting_over_speed_vEgo_BP_BP = [i * CV.MPH_TO_MS for i in [20., 80.]]
     self.coasting_long_plan = ""
     self.coasting_lead_d = -1. # [m] lead distance. -1. if no lead
     self.coasting_lead_v = -1.
     self.coasting_lead_a = 10.
     self.tr = 1.8
-    self.coast_one_pedal_mode_active = False
-    self.coast_one_pedal_mode_active_last = False
     self.pause_long_on_gas_press = False
     self.last_pause_long_on_gas_press_t = 0.
     self.gasPressed = False
     
-    self.one_pedal_mode_enabled = self._params.get_bool("OnePedalMode") and not self.disengage_on_gas
-    self.one_pedal_mode_op_braking_allowed = not self._params.get_bool("OnePedalModeSimple")
-    self.one_pedal_mode_engage_on_gas_enabled = self._params.get_bool("OnePedalModeEngageOnGas") and (self.one_pedal_mode_enabled or not self.disengage_on_gas)
-    self.one_pedal_dl_engage_on_gas_enabled = self.is_ev and self._params.get_bool("OnePedalDLEngageOnGas") and (self.one_pedal_mode_enabled or not self.disengage_on_gas)
-    self.one_pedal_dl_coasting_enabled = self.is_ev and self._params.get_bool("OnePedalDLCoasting") and (self.one_pedal_mode_enabled or not self.disengage_on_gas)
-    self.one_pedal_mode_engage_on_gas = False
-    self.one_pedal_mode_engage_on_gas_min_speed = 2.5 * CV.MPH_TO_MS # gas press at or above this speed with engage on gas enabled and one-pedal mode will activate
-    self.one_pedal_mode_max_set_speed = 3 * CV.MPH_TO_MS #  one pedal mode activates if cruise set at or below this speed
-    self.one_pedal_mode_stop_apply_brake_bp = [[i * CV.MPH_TO_MS for i in [1., 4., 8., 45., 85.]], [i * CV.MPH_TO_MS for i in [1., 7., 14., 45., 85.]], [1.]]
-    self.one_pedal_mode_stop_apply_brake_v = [[82., 90., 95., 115., 90.], [110., 150., 165., 185., 140.], [280.]] # three levels. 1-2 are cycled using follow distance press, and 3 by holding
-    self.one_pedal_mode_apply_brake = 0.
-    self.one_pedal_mode_active_last = False
-    self.one_pedal_mode_last_gas_press_t = 0.
-    self.one_pedal_mode_engaged_with_button = False
-    self.one_pedal_mode_active = False
-    self.one_pedal_brake_mode = int(self._params.get("OnePedalBrakeMode", encoding="utf8")) # 0, 1, or 2 selecting the brake profiles above. 2 is activated by pressing and holding the follow distance button for > 0.3s
-    self.one_pedal_last_brake_mode = 0 # for saving brake mode when not in one-pedal-mode
-    self.one_pedal_last_follow_level = 0 # for saving follow distance when in one-pedal mode
-    self.one_pedal_v_cruise_kph_last = 0
-    self.one_pedal_last_switch_to_friction_braking_t = 0.
-    self.one_pedal_pause_steering_enabled = self._params.get_bool("OnePedalPauseBlinkerSteering")
-    self.one_pedal_pitch_brake_adjust_bp = [-0.08, -0.005, 0.005, 0.10] # [radians] 0.12 radians of pitch ≈ 12% grade. No change within ±0.02
-    self.one_pedal_pitch_brake_adjust_v = [[.6, 1., 1., 1.5], [.75, 1., 1., 1.5], [.9, 1., 1., 1.5]] # used to scale the value of apply_brake
-    self.one_pedal_angle_steers_cutoff_bp = [60., 270.] # [degrees] one pedal braking goes down one "level" as steering wheel is turned more than this angle
-    self.one_pedal_coast_lead_dist_apply_brake_bp = [4.5, 15.] # [m] distance to lead
-    self.one_pedal_coast_lead_dist_apply_brake_v = [1., 0.] # [unitless] factor of light one-pedal braking
-    self.one_pedal_coast_stop_only_threshold_speed = 40.0  * CV.MPH_TO_MS # if you are in coast mode and enable friction braking under this speed and then stop, coast mode will auto activate again once you start. This is cancelled out if you press the gas again before stopping
-    self.one_pedal_coast_stop_only_mode = 0 # 0 = inactive, 1 = friction brakes applied under threshold speed, 2 = friction brakes applied and stopped
+    self.one_pedal_mode_enabled = self.MADS_enabled and self._params.get_bool("MADSOnePedalMode")
+    self.MADS_lead_braking_enabled = self.MADS_enabled and self._params.get_bool("MADSLeadBraking")
+    self.MADS_lead_braking_active = False
+    self.one_pedal_dl_coasting_enabled = True
+    self.one_pedal_mode_active = self.one_pedal_mode_enabled
+    self.long_active = False
+    self.one_pedal_mode_temporary = False
+    self.one_pedal_mode_regen_paddle_double_press_time = 0.7
+    self.regen_paddle_under_speed_pressed_time = 0.0
+    self.v_ego_prev = 0.0
+    self.MADS_pause_steering_enabled = self._params.get_bool("MADSPauseBlinkerSteering")
     
     self.drive_mode_button = False
     self.drive_mode_button_last = False
@@ -166,7 +164,6 @@ class CarState(CarStateBase):
     self.pitch_raw = 0. # radians
     self.pitch_ema = 1/100
     self.pitch_future_time = 0.5 # seconds
-    
     
     # similar to over-speed coast braking, lockout coast/one-pedal logic first for engine/regen braking, and then for actual brakes.
     # gas lockout lookup tables:
@@ -184,12 +181,11 @@ class CarState(CarStateBase):
     self.lead_d_long_brake_lockout_bp, self.lead_d_long_brake_lockout_v = [[6, 10], [1., 0.]] # pass through all cruise braking if follow distance < 6m
     
     self.showBrakeIndicator = self._params.get_bool("BrakeIndicator")
-    self.hvb_wattage = 0. # [kW]
     self.hvb_wattage_bp = [0., 53.] # [kW], based on the banned user BZZT's testimony at https://www.gm-volt.com/threads/using-regen-paddle-and-l-drive-mode-summary.222289/
     self.apply_brake_percent = 0. if self.showBrakeIndicator else -1. # for brake percent on ui
     self.vEgo = 0.
     self.v_cruise_kph = 1
-    self.min_lane_change_speed = 20. * CV.MPH_TO_MS
+    self.min_lane_change_speed = self._op_params.get('MADS_steer_pause_speed_mph', force_update=True) * CV.MPH_TO_MS
     self.blinker = False
     self.prev_blinker = self.blinker
     self.lane_change_steer_factor = 1.
@@ -200,9 +196,41 @@ class CarState(CarStateBase):
     self.a_ego_filtered_rc = 1.0
     self.a_ego_filtered = FirstOrderFilter(0.0, self.a_ego_filtered_rc, DT_CTRL)
     
+    self.low_visibility_active = False
+    self.slippery_roads_active = False
+    self.low_visibility_activated_t = 0.0
+    self.slippery_roads_activated_t = 0.0
+    
+    self.reboot_in_N_seconds = -1
+    
     self.lka_steering_cmd_counter = 0
+    
+  
+  def update_op_params(self, t = sec_since_boot()):
+    global GAS_PRESSED_THRESHOLD
+    self.REGEN_PADDLE_STOP_SPEED = self._op_params.get('MADS_OP_one_time_stop_threshold_mph') * CV.MPH_TO_MS
+    self.REGEN_PADDLE_STOP_PRESS_TIME = self._op_params.get('MADS_OP_one_time_stop_hold_s')
+    
+    base_BP = [self._op_params.get('MISC_coasting_low_speed_over'), self._op_params.get('MISC_coasting_high_speed_over')]
+    self.coasting_over_speed_vEgo_BP = [[i + 0.1 for i in base_BP], [i + 0.15 for i in base_BP]]
+    self.coasting_over_speed_regen_vEgo_BP = [base_BP, [i + 0.05 for i in base_BP]]
+    
+    self.hvb_wattage.update_alpha(self._op_params.get('MET_power_meter_smoothing_factor'))
+    self.one_pedal_mode_regen_paddle_double_press_time = self._op_params.get('MADS_OP_double_press_time_s')
+    self.min_lane_change_speed = self._op_params.get('MADS_steer_pause_speed_mph') * CV.MPH_TO_MS
+    GAS_PRESSED_THRESHOLD = max(1e-5, self._op_params.get('TUNE_LONG_gas_overlap_cutoff') * 0.01)
+    
+    for i in range(10):
+      key_op = f'MET_{i:02d}'
+      key = f'MeasureSlot{i:02d}'
+      metric_param = int(self._params.get(key, encoding="utf8"))
+      if metric_param != self.ui_metrics_params[i]:
+        cloudlog.info(f"opParams: UI metric in slot {i} '{UI_METRICS[self.ui_metrics_params[i]]}' ({self.ui_metrics_params[i]}) updated to '{UI_METRICS[metric_param]}' ({metric_param}) onroad. Copying new metric to opParams '{key_op}'")
+        self._op_params.put(key_op, UI_METRICS[metric_param])
+        self.ui_metrics_params[i] = metric_param
 
-  def update(self, pt_cp, loopback_cp):
+    
+  def update(self, pt_cp, loopback_cp, chassis_cp):
     ret = car.CarState.new_message()
     
     t = sec_since_boot()
@@ -228,32 +256,38 @@ class CarState(CarStateBase):
     ret.vEgoRaw = mean([ret.wheelSpeeds.fl, ret.wheelSpeeds.fr, ret.wheelSpeeds.rl, ret.wheelSpeeds.rr])
     ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
     if ret.vEgo < 3.0:
-      self.a_ego_filtered = FirstOrderFilter(ret.aEgo, self.a_ego_filtered_rc, DT_CTRL)
+      self.a_ego_filtered.x = ret.aEgo
     else:
       self.a_ego_filtered.update(ret.aEgo)
     
     self.vEgo = ret.vEgo
     ret.standstill = ret.vEgoRaw < 0.01
-    
-    if ret.vEgo < 3.0 and self.one_pedal_coast_stop_only_mode == 1:
-      self.one_pedal_coast_stop_only_mode = 2 # now will revert to one pedal coast mode on gas
 
     self.coasting_enabled_last = self.coasting_enabled
     if t - self.params_check_last_t >= self.params_check_freq:
       self.params_check_last_t = t
-      self.coasting_enabled = self._params.get_bool("Coasting")
-      self.accel_mode = int(self._params.get("AccelMode", encoding="utf8"))  # 0 = normal, 1 = sport; 2 = eco; 3 = creep
+      self.reboot_in_N_seconds = int(self._params.get("OPParamsRebootInNSeconds", encoding="utf8"))
+      self.update_op_params(t)
+      set_v_cruise_offset(self._op_params.get('MISC_set_speed_offset_mph') if self.cruise_offset_enabled else 0)
+      self.coasting_allowed = self._params.get_bool("Coasting")
+      self.coasting_enabled = self.coasting_allowed and self._params.get_bool("CoastingActive")
+      accel_mode = int(self._params.get("AccelMode", encoding="utf8"))  # 0 = normal, 1 = sport; 2 = eco
+      if accel_mode != self.accel_mode:
+        self.accel_mode_change_last_t = t
+      self.accel_mode = accel_mode
       self.showBrakeIndicator = self._params.get_bool("BrakeIndicator")
       if not self.disengage_on_gas:
-        self.one_pedal_pause_steering_enabled = self._params.get_bool("OnePedalPauseBlinkerSteering")
-        self.one_pedal_mode_enabled = self._params.get_bool("OnePedalMode")
-        self.one_pedal_mode_op_braking_allowed = not self._params.get_bool("OnePedalModeSimple")
-        self.one_pedal_mode_engage_on_gas_enabled = self._params.get_bool("OnePedalModeEngageOnGas") and (self.one_pedal_mode_enabled or not self.disengage_on_gas)
+        self.MADS_pause_steering_enabled = self._params.get_bool("MADSPauseBlinkerSteering")
+        self.one_pedal_mode_enabled = self.MADS_enabled and self._params.get_bool("MADSOnePedalMode")
+        self.MADS_lead_braking_enabled = self.MADS_enabled and self._params.get_bool("MADSLeadBraking")
 
     self.angle_steers = pt_cp.vl["PSCMSteeringAngle"]['SteeringWheelAngle']
       
-    self.gear_shifter = self.parse_gear_shifter(self.shifter_values.get(pt_cp.vl["ECMPRDNL"]['PRNDL'], None))
-    ret.gearShifter = self.gear_shifter    
+    gear_shifter = self.parse_gear_shifter(self.shifter_values.get(pt_cp.vl["ECMPRDNL"]['PRNDL'], None))
+    ret.clusterSpeed = self.cluster_speed.update(ret.vEgo, do_reset=self.gear_shifter != gear_shifter)
+    self.gear_shifter = gear_shifter
+    ret.gearShifter = self.gear_shifter
+    ret.brakePressure = chassis_cp.vl["EBCMFrictionBrakeStatus"]["FrictionBrakePressure"]
     ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["Brake_Pressed"] != 0 
     ret.brakePressed = ret.brakePressed and pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"] >= 15
     if ret.brakePressed:
@@ -263,6 +297,17 @@ class CarState(CarStateBase):
       self.user_brake = 0.
       ret.brake = 0.
     
+    if ret.gearShifter in ['drive','low']:
+      if ret.brakePressed:
+        self.time_in_drive_autohold = self.MADS_long_min_time_in_drive
+      else:
+        self.time_in_drive_autohold += DT_CTRL
+      self.time_in_drive_one_pedal += DT_CTRL
+    else:
+      self.time_in_drive_autohold = 0.0
+      self.time_in_drive_one_pedal = 0.0
+    
+    
     if self.showBrakeIndicator:
       if t - self.sessionInitTime < 13.:
         self.apply_brake_percent = int(round(interp(t - self.sessionInitTime, [i * 3. for i in range(4)], ([100,0]*2))))
@@ -270,10 +315,8 @@ class CarState(CarStateBase):
     
 
     ret.gas = pt_cp.vl["AcceleratorPedal2"]["AcceleratorPedal2"] / 254.
-    ret.gasPressed = ret.gas > 0.1
+    ret.gasPressed = ret.gas > GAS_PRESSED_THRESHOLD
     self.gasPressed = ret.gasPressed
-    if self.gasPressed and self.one_pedal_coast_stop_only_mode == 1:
-      self.one_pedal_coast_stop_only_mode = 0 # cancel stop only logic so it will stay in friction braking mode
     if self.gasPressed or self.vEgo < 0.2:
       self.resume_required = False
 
@@ -308,7 +351,66 @@ class CarState(CarStateBase):
                     pt_cp.vl["BCMDoorBeltStatus"]["FrontRightDoor"] == 1 or
                     pt_cp.vl["BCMDoorBeltStatus"]["RearLeftDoor"] == 1 or
                     pt_cp.vl["BCMDoorBeltStatus"]["RearRightDoor"] == 1)
+    
 
+    self.park_brake = pt_cp.vl["EPBStatus"]["EPBClosed"]
+    ret.cruiseState.available = pt_cp.vl["ECMEngineStatus"]["CruiseMainOn"] != 0
+    self.prev_cruise_main = self.cruiseMain
+    self.cruiseMain = ret.cruiseState.available
+    if self.cruiseMain and not self.prev_cruise_main:
+      self.lkaEnabled = True
+    elif not self.cruiseMain:
+      self.lkaEnabled = False
+    ret.espDisabled = pt_cp.vl["ESPStatus"]["TractionControlOn"] != 1
+    self.pcm_acc_status = pt_cp.vl["AcceleratorPedal2"]["CruiseState"]
+    
+
+    # Regen braking is braking
+    if self.is_ev:
+      regen_paddle_pressed = pt_cp.vl["EBCMRegenPaddle"]["RegenPaddle"] != 0
+      ret.regenPaddlePressed = regen_paddle_pressed
+      hvb_current = pt_cp.vl["BECMBatteryVoltageCurrent"]['HVBatteryCurrent']
+      hvb_voltage = pt_cp.vl["BECMBatteryVoltageCurrent"]['HVBatteryVoltage']
+      self.hvb_wattage.update(hvb_current * hvb_voltage)
+      ret.hvbVoltage = hvb_voltage
+      ret.hvbCurrent = hvb_current
+      ret.hvbWattage = self.hvb_wattage.x
+      self.gear_shifter_ev_last = self.gear_shifter_ev
+      self.gear_shifter_ev = pt_cp.vl["ECMPRDNL2"]['PRNDL2']
+      
+      if ret.gas > 1e-5 and self.one_pedal_mode_temporary:
+        self.one_pedal_mode_active = False
+        self.one_pedal_mode_temporary = False
+        cloudlog.info("Deactivating temporary one-pedal mode with gas press")
+      
+      if regen_paddle_pressed and not self.regen_paddle_pressed:
+        if self.MADS_enabled and t - self.regen_paddle_pressed_last_t <= self.one_pedal_mode_regen_paddle_double_press_time:
+          self.one_pedal_mode_active = not self.one_pedal_mode_active
+          self.one_pedal_mode_temporary = False
+          put_nonblocking("MADSOnePedalMode", str(int(self.one_pedal_mode_active))) # persists across drives
+          cloudlog.info(f"Toggling one-pedal mode with double-regen press. New value: {self.one_pedal_mode_active}")
+        self.regen_paddle_pressed_last_t = t
+      elif self.MADS_enabled \
+          and not self.one_pedal_mode_active \
+          and regen_paddle_pressed \
+          and self.regen_paddle_pressed \
+          and ((ret.vEgo < self.REGEN_PADDLE_STOP_SPEED \
+            and self.v_ego_prev >= self.REGEN_PADDLE_STOP_SPEED) \
+            or self.regen_paddle_under_speed_pressed_time >= self.REGEN_PADDLE_STOP_PRESS_TIME):
+        self.one_pedal_mode_active = True
+        self.one_pedal_mode_temporary = True
+        cloudlog.info("Activating temporary one-pedal mode")
+      
+      if not regen_paddle_pressed and self.regen_paddle_pressed:
+        self.regen_paddle_released_last_t = t
+      
+      if regen_paddle_pressed and self.regen_paddle_pressed and ret.vEgo < self.REGEN_PADDLE_STOP_SPEED:
+        self.regen_paddle_under_speed_pressed_time += DT_CTRL
+      else:
+        self.regen_paddle_under_speed_pressed_time = 0.0
+      
+      self.regen_paddle_pressed = regen_paddle_pressed
+    
     # 1 - latched
     ret.seatbeltUnlatched = pt_cp.vl["BCMDoorBeltStatus"]["LeftSeatBelt"] == 0
     ret.leftBlinker = pt_cp.vl["BCMTurnSignals"]["TurnSignals"] == 1
@@ -318,8 +420,9 @@ class CarState(CarStateBase):
     if self.blinker and self.vEgo <= self.min_lane_change_speed \
         and (self.a_ego_filtered.x <= self.steer_pause_a_ego_min \
           or self.vEgo <= self.min_steer_speed * 0.5) \
-        and (self.coast_one_pedal_mode_active or self.one_pedal_mode_active) \
-        and self.one_pedal_pause_steering_enabled \
+        and not self.long_active \
+        and (self.lkaEnabled and self.cruiseMain and self.MADS_enabled) \
+        and self.MADS_pause_steering_enabled \
         and not self.steer_unpaused:
       lane_change_steer_factor = 0.0
     else:
@@ -335,26 +438,6 @@ class CarState(CarStateBase):
                                          self.lane_change_steer_factor + self.steer_pause_rate)
     
     self.prev_blinker = self.blinker
-    
-
-    self.park_brake = pt_cp.vl["EPBStatus"]["EPBClosed"]
-    ret.cruiseState.available = pt_cp.vl["ECMEngineStatus"]["CruiseMainOn"] != 0
-    self.cruiseMain = ret.cruiseState.available
-    ret.espDisabled = pt_cp.vl["ESPStatus"]["TractionControlOn"] != 1
-    self.pcm_acc_status = pt_cp.vl["AcceleratorPedal2"]["CruiseState"]
-
-    # Regen braking is braking
-    if self.is_ev:
-      self.regenPaddlePressed = pt_cp.vl["EBCMRegenPaddle"]["RegenPaddle"] != 0
-      ret.brakePressed = ret.brakePressed or self.regenPaddlePressed
-      hvb_current = pt_cp.vl["BECMBatteryVoltageCurrent"]['HVBatteryCurrent']
-      hvb_voltage = pt_cp.vl["BECMBatteryVoltageCurrent"]['HVBatteryVoltage']
-      self.hvb_wattage = hvb_current * hvb_voltage
-      ret.hvbVoltage = hvb_voltage
-      ret.hvbCurrent = hvb_current
-      ret.hvbWattage = self.hvb_wattage
-      self.gear_shifter_ev_last = self.gear_shifter_ev
-      self.gear_shifter_ev = pt_cp.vl["ECMPRDNL2"]['PRNDL2']
     
     if self.iter % self.uiframe == 0:
       # drag, drive, brake, and ice power
@@ -374,35 +457,35 @@ class CarState(CarStateBase):
       if self.is_ev:
         if self.drive_power > 0.:
           self.brake_power = 0.
-          self.regen_power = (self.hvb_wattage * self.observed_efficiency.x) if self.hvb_wattage > 0. else 0.
+          self.regen_power = (self.hvb_wattage.x * self.observed_efficiency.x) if self.hvb_wattage.x > 0. else 0.
           self.regen_force = (self.regen_power / self.vEgo) if self.vEgo > 0.3 else 0.
           if self.engineRPM > 0:
-            self.ice_power = self.drive_power / max(0.1,self.observed_efficiency.x) + self.hvb_wattage  # [W]
-            self.ev_power = -((self.hvb_wattage + self.ice_power) * self.observed_efficiency.x) if self.hvb_wattage <= 0. else 0.
+            self.ice_power = self.drive_power / max(0.1,self.observed_efficiency.x) + self.hvb_wattage.x  # [W]
+            self.ev_power = -((self.hvb_wattage.x + self.ice_power) * self.observed_efficiency.x) if self.hvb_wattage.x <= 0. else 0.
           else:
-            self.ev_power = -(self.hvb_wattage * self.observed_efficiency.x) if self.hvb_wattage <= 0. else 0.
+            self.ev_power = -(self.hvb_wattage.x * self.observed_efficiency.x) if self.hvb_wattage.x <= 0. else 0.
             self.ice_power = 0.
-            if self.vEgo > 0.3 and ret.gearShifter != GearShifter.reverse and self.drive_power > 10000. and self.hvb_wattage < -10000.:
-              eff = self.drive_power / (-self.hvb_wattage)
+            if self.vEgo > 0.3 and ret.gearShifter != GearShifter.reverse and self.drive_power > 10000. and self.hvb_wattage.x < -10000.:
+              eff = self.drive_power / (-self.hvb_wattage.x)
               if eff < 1.0:
                 self.observed_efficiency.update(eff)
         else:
           if self.engineRPM == 0:
             self.ice_power = 0.
-            self.regen_power = (self.hvb_wattage * self.observed_efficiency.x) if self.hvb_wattage > 0. else 0.
+            self.regen_power = (self.hvb_wattage.x * self.observed_efficiency.x) if self.hvb_wattage.x > 0. else 0.
             self.regen_force = (self.regen_power / self.vEgo) if self.vEgo > 0.3 else 0.
-            self.ev_power = -(self.hvb_wattage * self.observed_efficiency.x) if self.hvb_wattage <= 0. else 0.
+            self.ev_power = -(self.hvb_wattage.x * self.observed_efficiency.x) if self.hvb_wattage.x <= 0. else 0.
             self.brake_power = -(self.drive_power + self.regen_power)
-            if self.vEgo > 0.3 and ret.gearShifter != GearShifter.reverse and self.drive_power < -5000. and self.hvb_wattage > 5000. and self.brake_cmd == 0 and not ret.brakePressed:
-              eff = -self.hvb_wattage / self.drive_power
+            if self.vEgo > 0.3 and ret.gearShifter != GearShifter.reverse and self.drive_power < -5000. and self.hvb_wattage.x > 5000. and self.brake_cmd == 0 and not ret.brakePressed:
+              eff = -self.hvb_wattage.x / self.drive_power
               if eff < 1.0:
                 self.observed_efficiency.update(eff)
           else: # assume full regen from dynamic gas/brake accel threshold which is a measure of available regen brake force
             self.regen_force = self.cp_mass * ev_regen_accel(self.vEgo+2.5, self.engineRPM > 0)
             self.regen_power = self.regen_force * self.vEgo  # [W]
             self.brake_power = self.drive_power - self.regen_power
-            self.ice_power = -self.hvb_wattage - self.regen_power
-            self.ev_power = -((self.hvb_wattage + self.ice_power) * self.observed_efficiency.x) if self.hvb_wattage <= 0. else 0.
+            self.ice_power = -self.hvb_wattage.x - self.regen_power
+            self.ev_power = -((self.hvb_wattage.x + self.ice_power) * self.observed_efficiency.x) if self.hvb_wattage.x <= 0. else 0.
         self.drive_power /= max(0.1, self.observed_efficiency.x) # [W]
       else:        
         self.ev_power = 0.
@@ -443,48 +526,31 @@ class CarState(CarStateBase):
     ret.observedEVDrivetrainEfficiency = self.observed_efficiency.x
     
     
-    if self.is_ev and self.coasting_dl_enabled:
-      if not self.coasting_enabled and self.gear_shifter_ev == GEAR_SHIFTER2.DRIVE:
-        self.coasting_enabled = True
-        put_nonblocking("Coasting", "1")
-      elif self.coasting_enabled and self.gear_shifter_ev == GEAR_SHIFTER2.LOW and (self.vEgo <= self.v_cruise_kph * CV.KPH_TO_MS or self.no_friction_braking):
-        self.coasting_enabled = False
-        put_nonblocking("Coasting", "0")
-    else:
-      if self.coasting_enabled != self.coasting_enabled_last:
-        if not self.coasting_enabled and self.vEgo > self.v_cruise_kph * CV.KPH_TO_MS and not self.no_friction_braking:
-          # prevent disable of coasting if over set speed and friction brakes not disabled.
-          put_nonblocking("Coasting", "1")
+    if self.coasting_allowed and self.gear_shifter in ['drive', 'low'] and self.long_active:
+      if self.is_ev and self.coasting_dl_enabled:
+        if not self.coasting_enabled and self.gear_shifter_ev == GEAR_SHIFTER2.DRIVE:
           self.coasting_enabled = True
+          put_nonblocking("CoastingActive", "1")
+        elif self.coasting_enabled and self.gear_shifter_ev == GEAR_SHIFTER2.LOW and (self.vEgo <= self.v_cruise_kph * CV.KPH_TO_MS or self.no_friction_braking):
+          self.coasting_enabled = False
+          put_nonblocking("CoastingActive", "0")
+      else:
+        if self.coasting_enabled != self.coasting_enabled_last:
+          if not self.coasting_enabled and self.vEgo > self.v_cruise_kph * CV.KPH_TO_MS and not self.no_friction_braking:
+            # prevent disable of coasting if over set speed and friction brakes not disabled.
+            put_nonblocking("CoastingActive", "1")
+            self.coasting_enabled = True
+    else:
+      self.coasting_enabled = False
+      
     ret.coastingActive = self.coasting_enabled
-    
-    if self.is_ev and self.one_pedal_dl_engage_on_gas_enabled:
-      if not self.one_pedal_mode_engage_on_gas_enabled and self.gear_shifter_ev == GEAR_SHIFTER2.LOW:
-        self.one_pedal_mode_engage_on_gas_enabled = True
-        put_nonblocking("OnePedalModeEngageOnGas", "1")
-      elif self.one_pedal_mode_engage_on_gas_enabled and self.gear_shifter_ev == GEAR_SHIFTER2.DRIVE:
-        self.one_pedal_mode_engage_on_gas_enabled = False
-        put_nonblocking("OnePedalModeEngageOnGas", "0")
 
     
     cruise_enabled = self.pcm_acc_status != AccState.OFF
     ret.cruiseState.enabled = cruise_enabled
     ret.cruiseState.standstill = False
     
-    one_pedal_mode_active = (self.one_pedal_mode_enabled and ret.cruiseState.enabled and self.v_cruise_kph * CV.KPH_TO_MS <= self.one_pedal_mode_max_set_speed)
-    coast_one_pedal_mode_active = (ret.cruiseState.enabled and self.v_cruise_kph * CV.KPH_TO_MS <= self.one_pedal_mode_max_set_speed)
-    if one_pedal_mode_active != self.one_pedal_mode_active or coast_one_pedal_mode_active != self.coast_one_pedal_mode_active:
-      if one_pedal_mode_active or coast_one_pedal_mode_active:
-        self.one_pedal_last_follow_level = self.follow_level
-        self.one_pedal_brake_mode = min(1, self.one_pedal_last_brake_mode)
-        self.follow_level = self.one_pedal_brake_mode + 1
-      else:
-        self.one_pedal_last_brake_mode = min(self.one_pedal_brake_mode, 1)
-        self.follow_level = self.one_pedal_last_follow_level
-    
-    if (cruise_enabled and not self.cruise_enabled_last) \
-       or (not one_pedal_mode_active and self.one_pedal_mode_active) \
-       or (not coast_one_pedal_mode_active and self.coast_one_pedal_mode_active):
+    if cruise_enabled and not self.cruise_enabled_last:
       if self.is_ev and self.gear_shifter_ev == GEAR_SHIFTER2.LOW:
         self.cruise_enabled_neg_accel_ramp_v[0] = 0.15
       else:
@@ -492,19 +558,38 @@ class CarState(CarStateBase):
       self.cruise_enabled_last_t = t
       
     self.cruise_enabled_last = cruise_enabled
-        
-    self.coast_one_pedal_mode_active = coast_one_pedal_mode_active
-    ret.coastOnePedalModeActive = self.coast_one_pedal_mode_active
-    self.one_pedal_mode_active = one_pedal_mode_active
-    ret.onePedalModeActive = self.one_pedal_mode_active
-    ret.onePedalBrakeMode = self.one_pedal_brake_mode
+    ret.cruiseMain = self.cruiseMain
+    
+    ret.onePedalModeActive = self.one_pedal_mode_active and not self.long_active and self.time_in_drive_one_pedal >= self.MADS_long_min_time_in_drive
+    if self.long_active:
+      ret.brakePressed = ret.brakePressed or self.regen_paddle_pressed
+    ret.onePedalModeTemporary = self.one_pedal_mode_temporary
+    ret.madsLeadBrakingActive = self.MADS_lead_braking_active and ret.vEgo > 0.02 and ret.gearShifter in ['drive','low'] and ret.gas < 1e-5 and not ret.brakePressed and ret.cruiseMain
+    
+    ret.slipperyRoadsActive = self.slippery_roads_active
+    ret.lowVisibilityActive = self.low_visibility_active
+    ret.rebootInNSeconds = int(self.reboot_in_N_seconds)
+    
+    if self.iter % 20 == 0:
+      if self.slippery_roads_active:
+        if self.follow_level != 2 and self.slippery_roads_activated_t > self.follow_level_change_last_t:
+          self.follow_level = 2
+          put_nonblocking("FollowLevel", str(int(self.follow_level)))
+        if self.accel_mode != 2 and self.slippery_roads_activated_t > self.accel_mode_change_last_t:
+          self.accel_mode = 2
+          put_nonblocking("AccelMode", str(int(self.accel_mode)))
+      if self.low_visibility_active:
+        if self.follow_level != 2 and self.low_visibility_activated_t > self.follow_level_change_last_t:
+          self.follow_level = 2
+          put_nonblocking("FollowLevel", str(int(self.follow_level)))
     
     self.pitch = self.pitch_ema * self.pitch_raw + (1 - self.pitch_ema) * self.pitch 
     ret.pitch = self.pitch
 
     ret.autoHoldActivated = self.autoHoldActivated
     
-    ret.lkMode = self.lkMode
+    ret.lkaEnabled = self.lkaEnabled
+    self.v_ego_prev = ret.vEgo
     
     self.iter += 1
     return ret
@@ -592,6 +677,20 @@ class CarState(CarStateBase):
     ]
 
     return CANParser(DBC[CP.carFingerprint]["pt"], signals, checks, CanBus.POWERTRAIN)
+  
+  @staticmethod
+  def get_chassis_can_parser(CP):
+    # this function generates lists for signal, messages and initial values
+    signals = [
+        # sig_name, sig_address, default
+        ("FrictionBrakePressure", "EBCMFrictionBrakeStatus", 0),
+    ]
+    
+    checks = [
+      ("EBCMFrictionBrakeStatus", 1),
+    ]
+
+    return CANParser(DBC[CP.carFingerprint]['chassis'], signals, checks, CanBus.CHASSIS)
 
   @staticmethod
   def get_loopback_can_parser(CP):

@@ -4,6 +4,7 @@ import math
 from numbers import Number
 
 from cereal import car, log
+from common.filter_simple import FirstOrderFilter
 from common.numpy_fast import clip, interp, mean
 from common.realtime import sec_since_boot, config_realtime_process, Priority, Ratekeeper, DT_CTRL
 from common.profiler import Profiler
@@ -24,6 +25,8 @@ from selfdrive.controls.lib.latcontrol_indi import LatControlINDI
 from selfdrive.controls.lib.latcontrol_lqr import LatControlLQR
 from selfdrive.controls.lib.latcontrol_angle import LatControlAngle
 from selfdrive.controls.lib.latcontrol_torque import LatControlTorque
+from selfdrive.controls.lib.latcontrol_torque_indi import LatControlTorqueINDI
+from selfdrive.controls.lib.latcontrol_torque_lqr import LatControlTorqueLQR
 from selfdrive.controls.lib.events import Events, ET
 from selfdrive.controls.lib.alertmanager import AlertManager
 from selfdrive.controls.lib.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
@@ -88,14 +91,18 @@ class Controls:
     params = Params()
     self.joystick_mode = params.get_bool("JoystickDebugMode")
     joystick_packet = ['testJoystick'] if self.joystick_mode else []
+    
+    self.gray_panda_support_enabled = params.get_bool("GrayPandaSupport")
 
     self.sm = sm
     if self.sm is None:
-      ignore = ['driverCameraState', 'managerState'] if SIMULATION else ['gpsLocationExternal']
+      ignore = ['driverCameraState', 'managerState'] if SIMULATION else ['liveWeatherData']
+      if self.gray_panda_support_enabled:
+        ignore += ['gpsLocationExternal']
       self.sm = messaging.SubMaster(['deviceState', 'pandaState', 'modelV2', 'liveCalibration',
                                      'driverMonitoringState', 'longitudinalPlan', 'lateralPlan', 'liveLocationKalman',
-                                     'managerState', 'liveParameters', 'radarState', 'gpsLocationExternal'] + self.camera_packets + joystick_packet,
-                                     ignore_alive=ignore, ignore_avg_freq=['radarState', 'longitudinalPlan', 'gpsLocationExternal'])
+                                     'managerState', 'liveParameters', 'radarState', 'gpsLocationExternal', 'liveWeatherData'] + self.camera_packets + joystick_packet,
+                                     ignore_alive=ignore, ignore_avg_freq=['radarState', 'longitudinalPlan', 'gpsLocationExternal', 'liveWeatherData'])
 
     self.can_sock = can_sock
     if can_sock is None:
@@ -115,8 +122,8 @@ class Controls:
     self.is_metric = params.get_bool("IsMetric")
     self.is_ldw_enabled = params.get_bool("IsLdwEnabled")
     community_feature_toggle = True
-    openpilot_enabled_toggle = params.get_bool("OpenpilotEnabledToggle")
-    passive = params.get_bool("Passive") or not openpilot_enabled_toggle
+    self.openpilot_enabled_toggle = params.get_bool("OpenpilotEnabledToggle")
+    passive = params.get_bool("Passive") or not self.openpilot_enabled_toggle
 
     # detect sound card presence and ensure successful init
     sounds_available = HARDWARE.get_sound_card_online()
@@ -154,17 +161,26 @@ class Controls:
       self.LaC = LatControlLQR(self.CP)
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI)
+    elif self.CP.lateralTuning.which() == 'torqueIndi':
+      self.LaC = LatControlTorqueINDI(self.CP, self.CI)
+    elif self.CP.lateralTuning.which() == 'torqueLqr':
+      self.LaC = LatControlTorqueLQR(self.CP, self.CI)
 
     self.initialized = False
     self.state = State.disabled
     self.enabled = False
+    self.enabled_last = False
     self.active = False
+    self.lat_active = False
     self.can_rcv_error = False
     self.soft_disable_timer = 0
     self.v_cruise_kph = 255
     self.v_cruise_kph_last = 0
     self.v_cruise_last_changed = 0.
     self.stock_speed_adjust = not params.get_bool("ReverseSpeedAdjust")
+    self.MADS_enabled = Params().get_bool("MADSEnabled")
+    self.MADS_lead_braking_enabled = self.MADS_enabled and params.get_bool("MADSLeadBraking")
+    self.accel_modes_enabled = params.get_bool("AccelModeButton")
     self.mismatch_counter = 0
     self.can_error_counter = 0
     self.last_blinker_frame = 0
@@ -178,17 +194,60 @@ class Controls:
     self.a_target = 0.0
     self.pitch = 0.0
     self.pitch_accel_deadzone = 0.01 # [radians] ≈ 1% grade
-    self.k_mean = 0.0
+    self.k_mean = FirstOrderFilter(0., 20, DT_CTRL)
     
+    self.slippery_roads_activated = False
+    self.slippery_roads = False
+    self.low_visibility = False
+    self.low_visibility_activated = False
+    self.weather_safety_enabled = params.get_bool("WeatherSafetyEnabled")
+    self.weather_valid = False
+    
+    self.reset_metrics = params.get_bool("MetricResetSwitch")
+    if self.reset_metrics:
+      params.put("TripDistance", "0.0")
+      params.put("NumberOfDisengagements", "0")
+      params.put("NumberOfInterventions", "0")
+      params.put("NumberOfInteractions", "0")
+      params.put("NumberOfDistractions", "0")
+      params.put("CarSecondsRunning", "0.0")
+      params.put("EngagedDistance", "0.0")
+      params.put("OpenPilotSecondsEngaged", "0.0")
+    
+    self.distance_traveled_total = float(params.get("TripDistance", encoding="utf8"))
+    self.car_running_timer_total = float(params.get("CarSecondsRunning", encoding="utf8"))
+    self.car_running_timer_session = 0.0
+    self.openpilot_long_control_timer_total = float(params.get("OpenPilotSecondsEngaged", encoding="utf8"))
+    self.openpilot_long_control_timer_session = 0.0
+    self.disengagement_timer = 0.0
     self.interaction_timer = 0.0 # [s] time since any interaction
     self.intervention_timer = 0.0 # [s] time since screen steering/gas/brake interaction
     self.distraction_timer = 0.0 # [s] time since driver distracted
+    self.disengagement_count_total = int(params.get("NumberOfDisengagements", encoding="utf8"))
+    self.disengagement_count_session = 0
+    self.interaction_count_total = int(params.get("NumberOfInteractions", encoding="utf8"))
+    self.interaction_count_session = 0
+    self.intervention_count_total = int(params.get("NumberOfInterventions", encoding="utf8"))
+    self.intervention_count_session = 0
+    self.distraction_count_total = int(params.get("NumberOfDistractions", encoding="utf8"))
+    self.distraction_count_session = 0
+    self.distance_last = 0.0
+    self.engaged_dist = 0.0
+    self.engaged_dist_session = 0.0
+    self.engaged_dist_total = float(params.get("EngagedDistance", encoding="utf8"))
+    self.interaction_dist = 0.0
+    self.intervention_dist = 0.0
+    self.distraction_dist = 0.0
     self.interaction_last_t = sec_since_boot()
     self.intervention_last_t = sec_since_boot()
     self.distraction_last_t = sec_since_boot()
     self.params_check_last_t = 0.0
-    self.params_check_freq = 1.0
+    self.params_check_freq = 0.3
     self._params = params
+    self.params_write_freq = 30.0
+    self.params_write_last_t = sec_since_boot()
+    self.op_params_override_lateral = self._params.get_bool('OPParamsLateralOverride')
+    self.op_params_override_long = self._params.get_bool('OPParamsLongitudinalOverride')
 
     # TODO: no longer necessary, aside from process replay
     self.sm['liveParameters'].valid = True
@@ -234,21 +293,83 @@ class Controls:
     t = sec_since_boot()
     
     if t - self.params_check_last_t > self.params_check_freq:
-      self.params_check_last_t = t
+      if self.op_params_override_lateral:
+        self.LaC.update_op_params()
+      if self.op_params_override_long:
+        self.LoC.update_op_params()
       screen_tapped = self._params.get_bool("ScreenTapped")
       if screen_tapped:
+        self.CI.screen_tapped = True
         put_nonblocking("ScreenTapped", "0")
-      car_interaction = CS.brakePressed or CS.gasPressed or CS.steeringPressed
-      if screen_tapped or car_interaction or self.CI.driver_interacted:
+      self.distance_last = CS.vEgo * (t - self.params_check_last_t)
+      self.distance_traveled_total += self.distance_last
+      if CS.gearShifter in ['drive', 'low', 'reverse']:
+        self.car_running_timer_session += self.params_check_freq
+        self.car_running_timer_total += self.params_check_freq
+      if not self.enabled and self.enabled_last and CS.vEgo > 0.5:
+        self.disengagement_count_session += 1
+        self.disengagement_count_total += 1
+        self.disengagement_last_t = t
+      elif self.enabled and self.enabled_last:
+        self.openpilot_long_control_timer_session += self.params_check_freq
+        self.openpilot_long_control_timer_total += self.params_check_freq
+        self.disengagement_timer += self.params_check_freq
+        self.engaged_dist += self.distance_last
+        self.engaged_dist_session += self.distance_last
+        self.engaged_dist_total += self.distance_last
+        self.interaction_dist += self.distance_last
+        self.intervention_dist += self.distance_last
+      if not self.enabled:
         self.interaction_last_t = t
-        self.CI.driver_interacted = False
-      if car_interaction:
         self.intervention_last_t = t
-      if not car_interaction and self.sm['driverMonitoringState'].isDistracted and CS.vEgo > 1.0:
+        self.disengagement_timer = 0.0
+        self.engaged_dist = 0.0
+      if CS.gearShifter not in ['drive','low']:
+        self.interaction_last_t = t
+        self.intervention_last_t = t
         self.distraction_last_t = t
+      else:
+        car_interaction = CS.brakePressed or CS.gas > 1e-5 or CS.steeringPressed
+        if screen_tapped or car_interaction or self.CI.driver_interacted:
+          if self.interaction_timer > 2.0:
+            self.interaction_count_session += 1
+            self.interaction_count_total += 1
+          self.interaction_last_t = t
+          self.interaction_dist = 0.0
+          self.CI.driver_interacted = False
+        if car_interaction:
+          if self.intervention_timer > 2.0:
+            self.intervention_count_session += 1
+            self.intervention_count_total += 1
+          self.intervention_last_t = t
+          self.intervention_dist = 0.0
+        if not car_interaction and self.sm['driverMonitoringState'].isDistracted or CS.vEgo < 0.1:
+          if CS.vEgo > 0.1 and self.distraction_timer > 2.0:
+            self.distraction_count_session += 1
+            self.distraction_count_total += 1
+          self.distraction_last_t = t
+          self.distraction_dist = 0.0
+        else:
+          self.distraction_dist += self.distance_last
       self.interaction_timer = t - self.interaction_last_t
       self.intervention_timer = t - self.intervention_last_t
       self.distraction_timer = t - self.distraction_last_t
+      self.MADS_lead_braking_enabled = self.MADS_enabled and self._params.get_bool("MADSLeadBraking")
+      self.enabled_last = self.enabled
+      self.params_check_last_t = t
+      if t - self.params_write_last_t > self.params_write_freq:
+        put_nonblocking("NumberOfDisengagements", str(self.disengagement_count_total))
+        put_nonblocking("NumberOfInteractions", str(self.interaction_count_total))
+        put_nonblocking("NumberOfInterventions", str(self.intervention_count_total))
+        put_nonblocking("NumberOfDistractions", str(self.distraction_count_total))
+        put_nonblocking("CarSecondsRunning", str(self.car_running_timer_total))
+        put_nonblocking("OpenPilotSecondsEngaged", str(self.openpilot_long_control_timer_total))
+        put_nonblocking("TripDistance", str(self.distance_traveled_total))
+        put_nonblocking("EngagedDistance", str(self.engaged_dist_total))
+        if self.reset_metrics:
+          self.reset_metrics = False
+          put_nonblocking("MetricResetSwitch", "0")
+        self.params_write_last_t = t
     
     network_strength = self.sm['deviceState'].networkStrength
     if network_strength != self.network_strength_last:
@@ -267,6 +388,12 @@ class Controls:
           ):
       self.events.add(EventName.signalLost)
     
+    if self.slippery_roads_activated:
+      self.slippery_roads_activated = False
+      self.events.add(EventName.slipperyRoadsActivated)
+    if self.low_visibility_activated:
+      self.low_visibility_activated = False
+      self.events.add(EventName.lowVisibilityActivated)
 
     # Create events for battery, temperature, disk space, and memory
     if EON and self.sm['deviceState'].batteryPercent < 1 and self.sm['deviceState'].chargingError:
@@ -465,49 +592,65 @@ class Controls:
       vEgo = getattr(CS, "vEgo", None)
       vEgo = int(round((float(vEgo) * 3.6 if self.is_metric else int(round((float(vEgo) * 3.6 * 0.6233 + 0.0995)))))) if vEgo else v_cruise
       
+      if self.weather_safety_enabled and self.sm.updated['liveWeatherData']:
+        if self.sm['liveWeatherData'].valid:
+          precip_1h = self.sm['liveWeatherData'].rain1Hour * 4 + self.sm['liveWeatherData'].snow1Hour
+          precip_3h = self.sm['liveWeatherData'].rain3Hour * 4 + self.sm['liveWeatherData'].snow3Hour
+          precip = max(precip_1h * 1.5, precip_3h)
+          slippery_roads = self.sm['liveWeatherData'].temperature < -1.0 \
+            and precip > 15
+          low_visibility = self.sm['liveWeatherData'].visibility <= 1500 \
+            or precip > 10
+          if slippery_roads and (not self.weather_valid or not self.slippery_roads):
+            self.CI.CS.slippery_roads_active = True
+            self.slippery_roads_activated = True
+            self.CI.CS.slippery_roads_activated_t = cur_time
+            cloudlog.info(f"Weather safety: Activating slippery road mode for {precip}mm @ {self.sm['liveWeatherData'].temperature}C")
+          elif low_visibility and (not self.weather_valid or not self.low_visibility):
+            self.CI.CS.low_visibility_active = True
+            self.CI.CS.low_visibility_activated_t = cur_time
+            self.low_visibility_activated = True
+            cloudlog.info(f"Weather safety: Activating low visibility mode. Visibility {self.sm['liveWeatherData'].visibility}m, precipitation {precip}mm")
+          
+          self.slippery_roads = slippery_roads
+          self.low_visibility = low_visibility
+        self.weather_valid = self.sm['liveWeatherData'].valid
+      
+      if not self.slippery_roads and self.CI.CS.slippery_roads_active:
+        self.CI.CS.slippery_roads_active = False
+        if not self.accel_modes_enabled:
+          self.CI.CS.accel_mode = 1
+          put_nonblocking("AccelMode", str(int(self.CI.CS.accel_mode)))
+      if not self.low_visibility and self.CI.CS.low_visibility_active:
+        self.CI.CS.low_visibility_active = False
       if self.sm.updated['gpsLocationExternal']:
         self.CI.CS.altitude = self.sm['gpsLocationExternal'].altitude
       if self.sm.updated['lateralPlan'] and len(self.sm['lateralPlan'].curvatures) > 0:
         k_mean = mean(self.sm['lateralPlan'].curvatures)
-        if abs(k_mean) > abs(self.k_mean):
-          self.k_mean = k_mean
+        if abs(k_mean) > abs(self.k_mean.x):
+          self.k_mean.x = k_mean
         else:
-          alpha = 0.0005
-          self.k_mean = alpha * k_mean + (1.0 - alpha) * self.k_mean
-        self.CI.CC.params.future_curvature = self.k_mean
+          self.k_mean.update(k_mean)
+        self.CI.CC.params.future_curvature = self.k_mean.x
       
       self.CI.CS.speed_limit_active = (self.sm['longitudinalPlan'].speedLimitControlState == log.LongitudinalPlan.SpeedLimitControlState.active)
       if self.CI.CS.speed_limit_active:
         self.CI.CS.speed_limit = (self.sm['longitudinalPlan'].speedLimit + self.sm['longitudinalPlan'].speedLimitOffset) * 3.6 # convert to kph
       
-      if self.CI.CS.one_pedal_mode_engage_on_gas:
-        self.CI.CS.one_pedal_mode_engage_on_gas = False
-        self.CI.CS.one_pedal_v_cruise_kph_last = self.v_cruise_kph
-        self.CI.CS.one_pedal_last_follow_level = self.CI.CS.follow_level
-        self.v_cruise_kph = V_CRUISE_MIN
-        self.CI.CS.one_pedal_last_brake_mode = 0
-      elif not self.accel_pressed and cur_time - self.accel_pressed_last < 0.3 and self.enabled and CS.cruiseState.enabled and (self.CI.CS.one_pedal_mode_active or self.CI.CS.coast_one_pedal_mode_active) and self.CI.CS.one_pedal_v_cruise_kph_last > 0: # user resuming speed from one-pedal mode
-        self.v_cruise_kph = self.CI.CS.one_pedal_v_cruise_kph_last
-        self.CI.CS.one_pedal_brake_mode = min(1, self.CI.CS.one_pedal_last_brake_mode)
-        self.CI.CS.follow_level = self.CI.CS.one_pedal_last_follow_level
-      else:
-        self.v_cruise_kph = update_v_cruise(v_cruise, CS.buttonEvents, self.enabled and CS.cruiseState.enabled, cur_time, self.accel_pressed,self.decel_pressed, self.accel_pressed_last, self.decel_pressed_last, self.fastMode, self.stock_speed_adjust, vEgo, CS.gas > 1e-5)
+      self.v_cruise_kph = update_v_cruise(v_cruise, CS.buttonEvents, self.enabled and CS.cruiseState.enabled, cur_time, self.accel_pressed,self.decel_pressed, self.accel_pressed_last, self.decel_pressed_last, self.fastMode, self.stock_speed_adjust, vEgo, CS.gas > 1e-5)
+    
+      self.v_cruise_kph = self.v_cruise_kph if self.is_metric else int(round((float(round(self.v_cruise_kph))-0.0995)/0.6233))
       
-        self.v_cruise_kph = self.v_cruise_kph if self.is_metric else int(round((float(round(self.v_cruise_kph))-0.0995)/0.6233))
-        
-        if self.v_cruise_kph < self.v_cruise_kph_last and cur_time - self.v_cruise_last_changed > 1.0:
-          self.CI.CS.one_pedal_v_cruise_kph_last = self.v_cruise_kph + (self.v_cruise_kph_last - self.v_cruise_kph)
-        
-        if self.v_cruise_kph != self.v_cruise_kph_last:
-          self.v_cruise_last_changed = cur_time
+      if self.v_cruise_kph != self.v_cruise_kph_last:
+        self.v_cruise_last_changed = cur_time
 
-        if(self.accel_pressed or self.decel_pressed):
-          if self.v_cruise_kph_last != self.v_cruise_kph:
-            self.accel_pressed_last = cur_time
-            self.decel_pressed_last = cur_time
-            self.fastMode = True
-        else:
-          self.fastMode = False  
+      if(self.accel_pressed or self.decel_pressed):
+        if self.v_cruise_kph_last != self.v_cruise_kph:
+          self.accel_pressed_last = cur_time
+          self.decel_pressed_last = cur_time
+          self.fastMode = True
+      else:
+        self.fastMode = False  
     elif self.CP.pcmCruise and CS.cruiseState.enabled:
       self.v_cruise_kph = CS.cruiseState.speed * CV.MS_TO_KPH
     
@@ -581,9 +724,14 @@ class Controls:
     self.active = self.state == State.enabled or self.state == State.softDisabling
     if self.active:
       self.current_alert_types.append(ET.WARNING)
+      
+    self.lat_active = self.CI.CS.lkaEnabled and (self.active or ((self.CI.CS.cruiseMain and self.MADS_enabled) and self.sm['liveCalibration'].calStatus == Calibration.CALIBRATED))
 
     # Check if openpilot is engaged
     self.enabled = self.active or self.state == State.preEnabled
+    
+    if not self.openpilot_enabled_toggle:
+      self.current_alert_types = []
 
   def state_control(self, CS):
     """Given the state, this function returns an actuators packet"""
@@ -615,19 +763,19 @@ class Controls:
     # State specific actions
 
     if not self.active:
-      self.LaC.reset()
-      self.LoC.reset(v_pid=CS.vEgo)
-    else:
-      if self.CI.CS.one_pedal_mode_active or self.CI.CS.coast_one_pedal_mode_active:
+      if not self.lat_active:
+        self.LaC.reset()
+      if not self.MADS_lead_braking_enabled or not self.CI.CS.cruiseMain:
         self.LoC.reset(v_pid=CS.vEgo)
-      if not self.CI.CS.lkMode:
+    else:
+      if not self.CI.CS.lkaEnabled:
         self.LaC.reset()
 
     if not self.joystick_mode:
       # accel PID loop
       pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, CS.vEgo, self.v_cruise_kph * CV.KPH_TO_MS, self.CI)
       t_since_plan = (self.sm.frame - self.sm.rcv_frame['longitudinalPlan']) * DT_CTRL
-      actuators.accel = self.LoC.update(self.active, CS, self.CP, long_plan, pid_accel_limits, t_since_plan)
+      actuators.accel = self.LoC.update(self.active, CS, self.CP, long_plan, pid_accel_limits, t_since_plan, MADS_lead_braking_enabled=self.MADS_lead_braking_enabled)
       
       # compute pitch-compensated accel
       if self.sm.updated['liveParameters']:
@@ -641,8 +789,10 @@ class Controls:
                                                                              lat_plan.curvatures,
                                                                              lat_plan.curvatureRates,
                                                                              t_since_plan)
-      actuators.steer, actuators.steeringAngleDeg, lac_log = self.LaC.update(self.active, CS, self.CP, self.VM, params, 
-                                                                             desired_curvature, desired_curvature_rate, self.sm['liveLocationKalman'])
+      actuators.steer, actuators.steeringAngleDeg, lac_log = self.LaC.update(self.lat_active, 
+                                                                             CS, self.CP, self.VM, params, 
+                                                                             desired_curvature, desired_curvature_rate, self.sm['liveLocationKalman'],
+                                                                             mean_curvature=self.k_mean.x)
     else:
       lac_log = log.ControlsState.LateralDebugState.new_message()
       if self.sm.rcv_frame['testJoystick'] > 0 and self.active:
@@ -661,7 +811,7 @@ class Controls:
     angle_control_saturated = self.CP.steerControlType == car.CarParams.SteerControlType.angle and \
       abs(actuators.steeringAngleDeg - CS.steeringAngleDeg) > STEER_ANGLE_SATURATION_THRESHOLD
 
-    if angle_control_saturated and not CS.steeringPressed and self.active:
+    if angle_control_saturated and not CS.steeringPressed and self.lat_active:
       self.saturated_count += 1
     else:
       self.saturated_count = 0
@@ -675,7 +825,7 @@ class Controls:
         left_deviation = actuators.steer > 0 and lat_plan.dPathPoints[0] < -0.1
         right_deviation = actuators.steer < 0 and lat_plan.dPathPoints[0] > 0.1
 
-        if left_deviation or right_deviation and CS.lkMode:
+        if left_deviation or right_deviation and CS.lkaEnabled:
           self.events.add(EventName.steerSaturated)
 
     # Ensure no NaNs/Infs
@@ -715,13 +865,6 @@ class Controls:
     CC.cruiseControl.accelOverride = float(self.CI.calc_accel_override(CS.aEgo, self.a_target,
                                                                        CS.vEgo, self.v_target))
     
-    CC.onePedalAccelOutput = float(self.CI.CC.one_pedal_decel)
-    CC.onePedalAccelInput = float(self.CI.CC.one_pedal_decel_in)
-    CC.onePedalP = float(self.CI.CC.one_pedal_pid.p)
-    CC.onePedalI = float(self.CI.CC.one_pedal_pid.i)
-    CC.onePedalD = float(self.CI.CC.one_pedal_pid.d)
-    CC.onePedalF = float(self.CI.CC.one_pedal_pid.f)
-    
     CC.hudControl.setSpeed = float(self.v_cruise_kph) * CV.KPH_TO_MS
     CC.hudControl.speedVisible = self.enabled
     CC.hudControl.lanesVisible = self.enabled
@@ -759,6 +902,14 @@ class Controls:
       # send car controls over can
       can_sends = self.CI.apply(CC)
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))
+    
+    
+    CC.onePedalAccelOutput = float(self.CI.CC.one_pedal_decel)
+    CC.onePedalAccelInput = float(self.CI.CC.one_pedal_decel_in)
+    CC.onePedalP = float(self.CI.CC.one_pedal_pid.p)
+    CC.onePedalI = float(self.CI.CC.one_pedal_pid.i)
+    CC.onePedalD = float(self.CI.CC.one_pedal_pid.d)
+    CC.onePedalF = float(self.CI.CC.one_pedal_pid.f)
 
     force_decel = (self.sm['driverMonitoringState'].awarenessStatus < 0.) or \
                   (self.state == State.softDisabling)
@@ -785,14 +936,18 @@ class Controls:
     controlsState.lateralPlanMonoTime = self.sm.logMonoTime['lateralPlan']
     controlsState.enabled = self.enabled
     controlsState.active = self.active
+    controlsState.latActive = self.lat_active
+    controlsState.madsEnabled = self.MADS_enabled and not self.active and self.CI.CS.cruiseMain
     controlsState.curvature = curvature
     controlsState.state = self.state
     controlsState.engageable = not self.events.any(ET.NO_ENTRY)
     controlsState.longControlState = self.LoC.long_control_state
     controlsState.vPid = float(self.LoC.v_pid)
     controlsState.vCruise = float(self.v_cruise_kph)
+    controlsState.aTarget = float(self.LoC.a_target)
     controlsState.upAccelCmd = float(self.LoC.pid.p)
     controlsState.uiAccelCmd = float(self.LoC.pid.i)
+    controlsState.udAccelCmd = float(self.LoC.pid.d)
     controlsState.ufAccelCmd = float(self.LoC.pid.f)
     controlsState.cumLagMs = -self.rk.remaining * 1000.
     controlsState.startMonoTime = int(start_time * 1e9)
@@ -801,6 +956,39 @@ class Controls:
     controlsState.interactionTimer = int(self.interaction_timer)
     controlsState.interventionTimer = int(self.intervention_timer)
     controlsState.distractionTimer = int(self.distraction_timer)
+    
+    controlsState.applyGas = int(self.CI.CC.apply_gas)
+    controlsState.applyBrakeOut = int(-self.CI.CC.apply_brake_out)
+    controlsState.applyBrakeIn = int(-self.CI.CC.apply_brake_in)
+    controlsState.applySteer = int(self.CI.CC.apply_steer)
+    controlsState.brakesAllowed = bool(self.CI.CC.brakes_allowed)
+    controlsState.gasBrakeThresholdAccel = float(self.CI.CC.threshold_accel)
+    
+    controlsState.distanceTraveledSession = float(self.distance_traveled)
+    controlsState.distanceTraveledTotal = float(self.distance_traveled_total)
+    controlsState.carRunningTimerTotal = int(self.car_running_timer_total)
+    controlsState.carRunningTimerSession = int(self.car_running_timer_session)
+    controlsState.openpilotLongControlTimerTotal = int(self.openpilot_long_control_timer_total)
+    controlsState.openpilotLongControlTimerSession = int(self.openpilot_long_control_timer_session)
+    controlsState.disengagementTimer = int(self.disengagement_timer)
+    controlsState.disengagementCountTotal = int(self.disengagement_count_total)
+    controlsState.disengagementCountSession = int(self.disengagement_count_session)
+    controlsState.interactionCountTotal = int(self.interaction_count_total)
+    controlsState.interactionCountSession = int(self.interaction_count_session)
+    controlsState.interventionCountTotal = int(self.intervention_count_total)
+    controlsState.interventionCountSession = int(self.intervention_count_session)
+    controlsState.distractionCountTotal = int(self.distraction_count_total)
+    controlsState.distractionCountSession = int(self.distraction_count_session)
+    controlsState.interactionDistance = float(self.interaction_dist)
+    controlsState.interventionDistance = float(self.intervention_dist)
+    controlsState.engagedDistance = float(self.engaged_dist)
+    controlsState.engagedDistanceTotal = float(self.engaged_dist_total)
+    controlsState.engagedDistanceSession = float(self.engaged_dist_session)
+    controlsState.distractionDistance = int(self.distraction_dist)
+    controlsState.percentEngagedTimeSession = float(self.openpilot_long_control_timer_session / max(self.car_running_timer_session, 1.0) * 100.0)
+    controlsState.percentEngagedTimeTotal = float(self.openpilot_long_control_timer_total / max(self.car_running_timer_total, 1.0) * 100.0)
+    controlsState.percentEngagedDistanceSession = float(self.engaged_dist_session / max(1.0, self.distance_traveled) * 100.0)
+    controlsState.percentEngagedDistanceTotal = float(self.engaged_dist_total / max(1.0, self.distance_traveled_total) * 100.0)
 
     lat_tuning = self.CP.lateralTuning.which()
     if self.joystick_mode:
@@ -815,6 +1003,10 @@ class Controls:
       controlsState.lateralControlState.indiState = lac_log
     elif lat_tuning == 'torque':
       controlsState.lateralControlState.torqueState = lac_log
+    elif lat_tuning == 'torqueLqr':
+      controlsState.lateralControlState.torqueLqrState = lac_log
+    elif lat_tuning == 'torqueIndi':
+      controlsState.lateralControlState.torqueIndiState = lac_log
     self.pm.send('controlsState', dat)
 
     # carState

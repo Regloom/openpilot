@@ -617,13 +617,13 @@ static void ui_draw_vision_lane_lines(UIState *s) {
       ui_draw_line(s, scene.road_edge_vertices[i], &color, nullptr);
     }
   }
-  if (scene.controls_state.getEnabled()) {
+  if (scene.controls_state.getLatActive()) {
     if (steerOverride) {
       track_bg = nvgLinearGradient(s->vg, s->fb_w, s->fb_h, s->fb_w, s->fb_h*.4,
         COLOR_BLACK_ALPHA(80), COLOR_BLACK_ALPHA(20));
     } 
     else if (!scene.lateralPlan.lanelessModeStatus) {
-      if (scene.car_state.getLkMode()){
+      if (scene.car_state.getLkaEnabled()){
         if (scene.color_path){
           track_bg = nvgLinearGradient(s->vg, s->fb_w, s->fb_h, s->fb_w, s->fb_h*.4,
             interp_alert_color(fabs(scene.lateralCorrection), 150), 
@@ -641,7 +641,7 @@ static void ui_draw_vision_lane_lines(UIState *s) {
       }
     } 
     else { // differentiate laneless mode color (Grace blue)
-      if (scene.car_state.getLkMode()){
+      if (scene.car_state.getLkaEnabled()){
         if (scene.color_path){
           int g, r = 255.f * float(COLOR_GRACE_BLUE.b) * fabs(scene.lateralCorrection);
           r = CLIP(r, 255.f * COLOR_GRACE_BLUE.r, 255.f * COLOR_GRACE_BLUE.b);
@@ -779,30 +779,25 @@ static void ui_draw_world(UIState *s) {
 
 static void ui_draw_vision_maxspeed(UIState *s) {
   const int SET_SPEED_NA = 255;
-  float maxspeed = (*s->sm)["controlsState"].getControlsState().getVCruise();
+  float maxspeed = s->scene.controls_state.getVCruise();
   const Rect rect = {bdr_s * 2, int(bdr_s * 1.5), 184, 202};
   auto const & bg_colors_ = (s->scene.alt_engage_color_enabled ? alt_bg_colors : bg_colors);
   if (s->scene.one_pedal_fade > 0.){
-    NVGcolor nvg_color;
-    if(s->status == UIStatus::STATUS_DISENGAGED){
-          const QColor &color = bg_colors_[UIStatus::STATUS_DISENGAGED];
-          nvg_color = nvgRGBA(color.red(), color.green(), color.blue(), int(s->scene.one_pedal_fade * float(color.alpha())));
-        }
-    else if (s->scene.car_state.getOnePedalModeActive()){
-      const QColor &color = bg_colors_[s->scene.car_state.getOnePedalBrakeMode() + 1];
-      nvg_color = nvgRGBA(color.red(), color.green(), color.blue(), int(s->scene.one_pedal_fade * float(color.alpha())));
-    }
-    else {
-      nvg_color = nvgRGBA(0, 0, 0, int(s->scene.one_pedal_fade * 100.));
-    }
+    const QColor &color = bg_colors_[s->scene.car_state.getMadsLeadBrakingActive() ? 3 : (s->scene.car_state.getOnePedalModeTemporary() ? 2 : (s->scene.car_state.getOnePedalModeActive() ? 1 : 0))];
+    NVGcolor nvg_color = nvgRGBA(color.red(), color.green(), color.blue(), int(s->scene.one_pedal_fade * float(color.alpha())));
     const Rect pedal_rect = {rect.centerX() - brake_size, rect.centerY() - brake_size, brake_size * 2, brake_size * 2};
     ui_fill_rect(s->vg, pedal_rect, nvg_color, brake_size);
-    ui_draw_image(s, {rect.centerX() - brake_size, rect.centerY() - brake_size, brake_size * 2, brake_size * 2}, "one_pedal_mode", s->scene.one_pedal_fade);
+    if (s->scene.car_state.getOnePedalModeActive()){
+      ui_draw_image(s, {rect.centerX() - brake_size, rect.centerY() - brake_size, brake_size * 2, brake_size * 2}, "one_pedal_mode", s->scene.one_pedal_fade);
+    }
+    else{
+      ui_draw_image(s, {rect.centerX() - brake_size, rect.centerY() - brake_size, brake_size * 2, brake_size * 2}, "MADS", s->scene.one_pedal_fade);
+    }
     s->scene.one_pedal_touch_rect = pedal_rect;
     s->scene.maxspeed_touch_rect = {1,1,1,1};
     
-    // draw extra circle to indiate one-pedal engage on gas is enabled
-    if (s->scene.onePedalEngageOnGasEnabled){
+    // draw extra circle to indiate one-pedal lead braking is enabled
+    if (!(s->scene.onePedalModeSimple)){
       nvgBeginPath(s->vg);
       const int r = int(float(brake_size) * 1.15);
       nvgRoundedRect(s->vg, rect.centerX() - r, rect.centerY() - r, 2 * r, 2 * r, r);
@@ -816,7 +811,7 @@ static void ui_draw_vision_maxspeed(UIState *s) {
   else{
     s->scene.one_pedal_touch_rect = {1,1,1,1};
     s->scene.maxspeed_touch_rect = rect;
-    const bool is_cruise_set = maxspeed != 0 && maxspeed != SET_SPEED_NA;
+    const bool is_cruise_set = s->scene.controls_state.getActive() && maxspeed != 0 && maxspeed != SET_SPEED_NA;
     if (is_cruise_set && !s->scene.is_metric) { maxspeed *= 0.6225; }
 
     ui_fill_rect(s->vg, rect, COLOR_BLACK_ALPHA(int(-s->scene.one_pedal_fade * 100.)), 30.);
@@ -961,7 +956,7 @@ static void ui_draw_measures(UIState *s){
           i += scene.measure_row_offset;
         }
 
-        char name[16], val[16], unit[8];
+        char name[32], val[24], unit[16];
         snprintf(name, sizeof(name), "");
         snprintf(val, sizeof(val), "");
         snprintf(unit, sizeof(unit), "");
@@ -1028,17 +1023,9 @@ static void ui_draw_measures(UIState *s){
             if (s < 5){
               val_color = nvgRGBA(255, 125, 100, 200);
             }
-            int h = s / 3600;
-            s = s % 3600;
-            int m = s / 60;
-            s = s % 60;
-            if (h > 0){
-              snprintf(val, sizeof(val), "%d:%02d:%02d", h, m, s);
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "INTERACT");
             }
-            else{
-              snprintf(val, sizeof(val), "%d:%02d", m, s);
-            }
-            snprintf(name, sizeof(name), "INTERACT");}
             break;
 
           case UIMeasure::INTERVENTION_TIMER: 
@@ -1047,17 +1034,9 @@ static void ui_draw_measures(UIState *s){
             if (s < 5){
               val_color = nvgRGBA(255, 125, 100, 200);
             }
-            int h = s / 3600;
-            s = s % 3600;
-            int m = s / 60;
-            s = s % 60;
-            if (h > 0){
-              snprintf(val, sizeof(val), "%d:%02d:%02d", h, m, s);
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "INTERVENE");
             }
-            else{
-              snprintf(val, sizeof(val), "%d:%02d", m, s);
-            }
-            snprintf(name, sizeof(name), "INTERVENE");}
             break;
           
           case UIMeasure::DISTRACTION_TIMER: 
@@ -1066,19 +1045,228 @@ static void ui_draw_measures(UIState *s){
             if (s < 5){
               val_color = nvgRGBA(255, 125, 100, 200);
             }
-            int h = s / 3600;
-            s = s % 3600;
-            int m = s / 60;
-            s = s % 60;
-            if (h > 0){
-              snprintf(val, sizeof(val), "%d:%02d:%02d", h, m, s);
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "DISTRACT");
             }
-            else{
-              snprintf(val, sizeof(val), "%d:%02d", m, s);
+            break;
+
+          case UIMeasure::TIME_CAR_RUNNING_SESSION: 
+            {
+            int s = scene.controls_state.getCarRunningTimerSession();
+            if (s < 5){
+              val_color = nvgRGBA(255, 125, 100, 200);
             }
-            snprintf(name, sizeof(name), "DISTRACT");}
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "DRIVE TIME");
+            }
+            break;
+
+          case UIMeasure::TIME_CAR_RUNNING_TOTAL: 
+            {
+            int s = scene.controls_state.getCarRunningTimerTotal();
+            if (s < 5){
+              val_color = nvgRGBA(255, 125, 100, 200);
+            }
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "TRIP TIME");
+            }
+            break;
+
+          case UIMeasure::TIME_OPENPILOT_ENGAGED_SESSION: 
+            {
+            int s = scene.controls_state.getOpenpilotLongControlTimerSession();
+            if (s < 5){
+              val_color = nvgRGBA(255, 125, 100, 200);
+            }
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "DRIVE ENGD.");
+            }
+            break;
+
+          case UIMeasure::TIME_OPENPILOT_ENGAGED_TOTAL: 
+            {
+            int s = scene.controls_state.getOpenpilotLongControlTimerTotal();
+            if (s < 5){
+              val_color = nvgRGBA(255, 125, 100, 200);
+            }
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "TRIP ENGD.");
+            }
+            break;
+
+          case UIMeasure::TIME_OPENPILOT_ENGAGED: 
+            {
+            int s = scene.controls_state.getDisengagementTimer();
+            if (s < 5){
+              val_color = nvgRGBA(255, 125, 100, 200);
+            }
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "ENGAGED");
+            }
+            break;
+
+          case UIMeasure::TIME_ENGAGED_PERCENT_SESSION: 
+            {
+            float p = scene.controls_state.getPercentEngagedTimeSession();
+            snprintf(val, sizeof(val), "%0.1f%%", p);
+            snprintf(name, sizeof(name), "DRIVE ENGD.");
+            snprintf(unit, sizeof(unit), "time");
+            }
+            break;
+
+          case UIMeasure::TIME_ENGAGED_PERCENT_TOTAL: 
+            {
+            float p = scene.controls_state.getPercentEngagedTimeTotal();
+            snprintf(val, sizeof(val), "%0.1f%%", p);
+            snprintf(name, sizeof(name), "TRIP ENGD.");
+            snprintf(unit, sizeof(unit), "time");
+            }
+            break;
+
+          case UIMeasure::DISENGAGEMENT_COUNT_SESSION: 
+            {
+            int c = scene.controls_state.getDisengagementCountSession();
+            snprintf(val, sizeof(val), "%d", c);
+            snprintf(name, sizeof(name), "#DISENGAGE");
+            snprintf(unit, sizeof(unit), "drive");
+            }
+            break;
+
+          case UIMeasure::DISENGAGEMENT_COUNT_TOTAL: 
+            {
+            int c = scene.controls_state.getDisengagementCountTotal();
+            snprintf(val, sizeof(val), "%d", c);
+            snprintf(name, sizeof(name), "#DISENGAGE");
+            snprintf(unit, sizeof(unit), "trip");
+            }
+            break;
+
+          case UIMeasure::INTERACTION_COUNT_SESSION: 
+            {
+            int c = scene.controls_state.getInteractionCountSession();
+            snprintf(val, sizeof(val), "%d", c);
+            snprintf(name, sizeof(name), "#INTERACT");
+            snprintf(unit, sizeof(unit), "drive");
+            }
+            break;
+
+          case UIMeasure::INTERACTION_COUNT_TOTAL: 
+            {
+            int c = scene.controls_state.getInteractionCountTotal();
+            snprintf(val, sizeof(val), "%d", c);
+            snprintf(name, sizeof(name), "#INTERACT");
+            snprintf(unit, sizeof(unit), "trip");
+            }
+            break;
+
+          case UIMeasure::INTERVENTION_COUNT_SESSION: 
+            {
+            int c = scene.controls_state.getInterventionCountSession();
+            snprintf(val, sizeof(val), "%d", c);
+            snprintf(name, sizeof(name), "#INTERVENE");
+            snprintf(unit, sizeof(unit), "drive");
+            }
+            break;
+
+          case UIMeasure::INTERVENTION_COUNT_TOTAL: 
+            {
+            int c = scene.controls_state.getInterventionCountTotal();
+            snprintf(val, sizeof(val), "%d", c);
+            snprintf(name, sizeof(name), "#INTERVENE");
+            snprintf(unit, sizeof(unit), "trip");
+            }
+            break;
+
+          case UIMeasure::DISTRACTION_COUNT_SESSION: 
+            {
+            int c = scene.controls_state.getDistractionCountSession();
+            snprintf(val, sizeof(val), "%d", c);
+            snprintf(name, sizeof(name), "#DISTRACT");
+            snprintf(unit, sizeof(unit), "drive");
+            }
+            break;
+
+          case UIMeasure::DISTRACTION_COUNT_TOTAL: 
+            {
+            int c = scene.controls_state.getDistractionCountTotal();
+            snprintf(val, sizeof(val), "%d", c);
+            snprintf(name, sizeof(name), "#DISTRACT");
+            snprintf(unit, sizeof(unit), "trip");
+            }
+            break;
+
+          case UIMeasure::TIME_PER_DISENGAGEMENT_SESSION: 
+            {
+            int s = float(scene.controls_state.getOpenpilotLongControlTimerSession()) / MAX(1.0, float(scene.controls_state.getDisengagementCountSession()));
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "PER DISENGAGE");
+            snprintf(unit, sizeof(unit), "drive time");
+            }
+            break;
+
+          case UIMeasure::TIME_PER_DISENGAGEMENT_TOTAL: 
+            {
+            int s = float(scene.controls_state.getOpenpilotLongControlTimerTotal()) / MAX(1.0, scene.controls_state.getDisengagementCountTotal());
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "PER DISENGAGE");
+            snprintf(unit, sizeof(unit), "trip time");
+            }
             break;
             
+          case UIMeasure::TIME_PER_INTERACTION_SESSION: 
+            {
+            int s = float(scene.controls_state.getOpenpilotLongControlTimerSession()) / MAX(1.0, scene.controls_state.getInteractionCountSession());
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "PER INTERACT");
+            snprintf(unit, sizeof(unit), "drive time");
+            }
+            break;
+
+          case UIMeasure::TIME_PER_INTERACTION_TOTAL: 
+            {
+            int s = float(scene.controls_state.getOpenpilotLongControlTimerTotal()) / MAX(1.0, scene.controls_state.getInteractionCountTotal());
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "PER INTERACT");
+            snprintf(unit, sizeof(unit), "trip time");
+            }
+            break;
+
+          case UIMeasure::TIME_PER_INTERVENTION_SESSION: 
+            {
+            int s = float(scene.controls_state.getOpenpilotLongControlTimerSession()) / MAX(1.0, scene.controls_state.getInterventionCountSession());
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "PER INTERVENE");
+            snprintf(unit, sizeof(unit), "drive time");
+            }
+            break;
+
+          case UIMeasure::TIME_PER_INTERVENTION_TOTAL: 
+            {
+            int s = float(scene.controls_state.getOpenpilotLongControlTimerTotal()) / MAX(1.0, scene.controls_state.getInterventionCountTotal());
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "PER INTERVENE");
+            snprintf(unit, sizeof(unit), "trip time");
+            }
+            break;
+
+          case UIMeasure::TIME_PER_DISTRACTION_SESSION: 
+            {
+            int s = float(scene.controls_state.getOpenpilotLongControlTimerSession()) / MAX(1.0, scene.controls_state.getInterventionCountSession());
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "PER DISTRACT");
+            snprintf(unit, sizeof(unit), "drive time");
+            }
+            break;
+
+          case UIMeasure::TIME_PER_DISTRACTION_TOTAL: 
+            {
+            int s = float(scene.controls_state.getOpenpilotLongControlTimerTotal()) / MAX(1.0, scene.controls_state.getInterventionCountTotal());
+            s_to_time_str(val, s);
+            snprintf(name, sizeof(name), "PER DISTRACT");
+            snprintf(unit, sizeof(unit), "trip time");
+            }
+            break;
+
           case UIMeasure::CPU_TEMP_AND_PERCENTC: 
             {
             auto cpus = scene.deviceState.getCpuUsagePercent();
@@ -1617,21 +1805,21 @@ static void ui_draw_measures(UIState *s){
           case UIMeasure::VISION_CURLATACCEL:
             {
             snprintf(name, sizeof(name), "V:LAT ACC");
-            snprintf(val, sizeof(val), "%.1f", sm["longitudinalPlan"].getLongitudinalPlan().getVisionCurrentLateralAcceleration());
+            snprintf(val, sizeof(val), "%.1f", scene.longitudinal_plan.getVisionCurrentLateralAcceleration());
             snprintf(unit, sizeof(unit), "m/s²");
             break;}
           
           case UIMeasure::VISION_MAXVFORCURCURV:
             {
             snprintf(name, sizeof(name), "V:MX CUR V");
-            snprintf(val, sizeof(val), "%.1f", sm["longitudinalPlan"].getLongitudinalPlan().getVisionMaxVForCurrentCurvature() * 2.24);
+            snprintf(val, sizeof(val), "%.1f", scene.longitudinal_plan.getVisionMaxVForCurrentCurvature() * 2.24);
             snprintf(unit, sizeof(unit), "mph");
             break;}
           
           case UIMeasure::VISION_MAXPREDLATACCEL:
             {
             snprintf(name, sizeof(name), "V:MX PLA");
-            snprintf(val, sizeof(val), "%.1f", sm["longitudinalPlan"].getLongitudinalPlan().getVisionMaxPredictedLateralAcceleration());
+            snprintf(val, sizeof(val), "%.1f", scene.longitudinal_plan.getVisionMaxPredictedLateralAcceleration());
             snprintf(unit, sizeof(unit), "m/s²");
             break;}
 
@@ -2038,13 +2226,16 @@ static void ui_draw_measures(UIState *s){
               }
               else {
                 snprintf(val, sizeof(val), "%d", scene.engineRPM);
-                if (temp < 74){
+                if (temp < 50){ 
                   unit_color = nvgRGBA(84, 207, 249, 200); // cyan if too cool
                 }
-                else if (temp > 115){
+                else if (temp < 66){ // Volt keeps engine temp between 50-65 when cold outside
+                  unit_color = nvgRGBA(0, 255, 100, 200); // green
+                }
+                else if (temp > 108){
                   unit_color = nvgRGBA(255, 0, 0, 200); // red if too hot
                 }
-                else if (temp > 99){
+                else if (temp > 95){
                   unit_color = nvgRGBA(255, 169, 63, 200); // orange if close to too hot
                 }
               }
@@ -2061,13 +2252,16 @@ static void ui_draw_measures(UIState *s){
               }
               else {
                 snprintf(val, sizeof(val), "%d", scene.engineRPM);
-                if (temp < 165){
+                if (temp < 122){
                   unit_color = nvgRGBA(84, 207, 249, 200); // cyan if too cool
                 }
-                else if (temp > 240){
+                else if (temp < 151){ // Volt keeps engine temp between 50-65C when cold outside
+                  unit_color = nvgRGBA(0, 255, 100, 200); // green
+                }
+                else if (temp > 226){
                   unit_color = nvgRGBA(255, 0, 0, 200); // red if too hot
                 }
-                else if (temp > 210){
+                else if (temp > 203){
                   unit_color = nvgRGBA(255, 169, 63, 200); // orange if close to too hot
                 }
               }
@@ -2081,13 +2275,16 @@ static void ui_draw_measures(UIState *s){
               int temp = scene.car_state.getEngineCoolantTemp();
               snprintf(val, sizeof(val), "%d", temp);
               if(scene.engineRPM > 0 || temp >= 55) {
-                if (temp < 74){
+                if (temp < 50){
                   val_color = nvgRGBA(84, 207, 249, 200); // cyan if too cool
                 }
-                else if (temp > 115){
+                else if (temp < 66){ // Volt keeps engine temp between 50-65 when cold outside
+                  val_color = nvgRGBA(0, 255, 100, 200); // green
+                }
+                else if (temp > 108){
                   val_color = nvgRGBA(255, 0, 0, 200); // red if too hot
                 }
-                else if (temp > 99){
+                else if (temp > 95){
                   val_color = nvgRGBA(255, 169, 63, 200); // orange if close to too hot
                 }
               }
@@ -2101,13 +2298,16 @@ static void ui_draw_measures(UIState *s){
               int temp = int(float(scene.car_state.getEngineCoolantTemp()) * 1.8 + 32.5);
               snprintf(val, sizeof(val), "%d", temp);
               if(scene.engineRPM > 0 || temp >= 130) {
-                if (temp < 165){
+                if (temp < 122){
                   val_color = nvgRGBA(84, 207, 249, 200); // cyan if too cool
                 }
-                else if (temp > 240){
+                else if (temp < 151){ // Volt keeps engine temp between 50-65C when cold outside
+                  val_color = nvgRGBA(0, 255, 100, 200); // green
+                }
+                else if (temp > 226){
                   val_color = nvgRGBA(255, 0, 0, 200); // red if too hot
                 }
-                else if (temp > 210){
+                else if (temp > 203){
                   val_color = nvgRGBA(255, 169, 63, 200); // orange if close to too hot
                 }
               }
@@ -2600,10 +2800,10 @@ static void ui_draw_measures(UIState *s){
             }
             break;
 
-          case UIMeasure::DISTANCE_TRAVELLED: 
+          case UIMeasure::DISTANCE_TRAVELED_TOTAL: 
             {
               snprintf(name, sizeof(name), "TRIP DIST.");
-              float temp = scene.ev_eff_total_dist / (scene.is_metric ? 1000. : 1609.);
+              float temp = scene.controls_state.getDistanceTraveledTotal() / (scene.is_metric ? 1000. : 1609.);
               if (abs(temp) >= 100.){
                 snprintf(val, sizeof(val), "%.0f", temp);
               }
@@ -2614,6 +2814,287 @@ static void ui_draw_measures(UIState *s){
                 snprintf(val, sizeof(val), "%.2f", temp);
               }
               snprintf(unit, sizeof(unit), (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_TRAVELED_SESSION: 
+            {
+              snprintf(name, sizeof(name), "DRIVE DIST.");
+              float temp = scene.controls_state.getDistanceTraveledSession() / (scene.is_metric ? 1000. : 1609.);
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+          
+          case UIMeasure::DISTANCE_ENGAGED: 
+            {
+              snprintf(name, sizeof(name), "ENGAGED");
+              float temp = scene.controls_state.getEngagedDistance() / (scene.is_metric ? 1000. : 1609.);
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_ENGAGED_SESSION: 
+            {
+              snprintf(name, sizeof(name), "DRIVE ENGD.");
+              float temp = scene.controls_state.getEngagedDistanceSession() / (scene.is_metric ? 1000. : 1609.);
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_ENGAGED_TOTAL: 
+            {
+              snprintf(name, sizeof(name), "TRIP ENGD.");
+              float temp = scene.controls_state.getEngagedDistanceTotal() / (scene.is_metric ? 1000. : 1609.);
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_ENGAGED_PERCENT_SESSION: 
+            {
+              snprintf(name, sizeof(name), "DRIVE ENGD.");
+              float temp = scene.controls_state.getPercentEngagedDistanceSession();
+              snprintf(val, sizeof(val), "%.1f%%", temp);
+              snprintf(unit, sizeof(unit), "distance");
+            }
+            break;
+
+          case UIMeasure::DISTANCE_ENGAGED_PERCENT_TOTAL: 
+            {
+              snprintf(name, sizeof(name), "TRIP ENGD.");
+              float temp = scene.controls_state.getPercentEngagedDistanceTotal();
+              snprintf(val, sizeof(val), "%.1f%%", temp);
+              snprintf(unit, sizeof(unit), "distance");
+            }
+            break;
+
+          case UIMeasure::INTERACTION_DISTANCE: 
+            {
+              snprintf(name, sizeof(name), "INTERACT");
+              float temp = scene.controls_state.getInteractionDistance() / (scene.is_metric ? 1000. : 1609.);
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::INTERVENTION_DISTANCE: 
+            {
+              snprintf(name, sizeof(name), "INTERVENE");
+              float temp = scene.controls_state.getInterventionDistance() / (scene.is_metric ? 1000. : 1609.);
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTRACTION_DISTANCE: 
+            {
+              snprintf(name, sizeof(name), "DISTRACT");
+              float temp = scene.controls_state.getDistractionDistance() / (scene.is_metric ? 1000. : 1609.);
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_PER_DISENGAGEMENT_SESSION: 
+            {
+              snprintf(name, sizeof(name), "PER DISENGAGE");
+              float temp = scene.controls_state.getEngagedDistanceSession() / (scene.is_metric ? 1000. : 1609.);
+              temp /= MAX(1.0, float(scene.controls_state.getDisengagementCountSession()));
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), "drive %s", (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_PER_DISENGAGEMENT_TOTAL: 
+            {
+              snprintf(name, sizeof(name), "PER DISENGAGE");
+              float temp = scene.controls_state.getEngagedDistanceTotal() / (scene.is_metric ? 1000. : 1609.);
+              temp /= MAX(1.0, float(scene.controls_state.getDisengagementCountTotal()));
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), "trip %s", (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_PER_INTERACTION_SESSION: 
+            {
+              snprintf(name, sizeof(name), "PER INTERACT");
+              float temp = scene.controls_state.getEngagedDistanceSession() / (scene.is_metric ? 1000. : 1609.);
+              temp /= MAX(1.0, float(scene.controls_state.getInteractionCountSession()));
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), "drive %s", (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_PER_INTERACTION_TOTAL: 
+            {
+              snprintf(name, sizeof(name), "PER INTERACT");
+              float temp = scene.controls_state.getEngagedDistanceTotal() / (scene.is_metric ? 1000. : 1609.);
+              temp /= MAX(1.0, float(scene.controls_state.getInteractionCountTotal()));
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), "trip %s", (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_PER_INTERVENTION_SESSION: 
+            {
+              snprintf(name, sizeof(name), "PER INTERVENE");
+              float temp = scene.controls_state.getEngagedDistanceSession() / (scene.is_metric ? 1000. : 1609.);
+              temp /= MAX(1.0, float(scene.controls_state.getInterventionCountSession()));
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), "drive %s", (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_PER_INTERVENTION_TOTAL: 
+            {
+              snprintf(name, sizeof(name), "PER INTERVENE");
+              float temp = scene.controls_state.getEngagedDistanceTotal() / (scene.is_metric ? 1000. : 1609.);
+              temp /= MAX(1.0, float(scene.controls_state.getInterventionCountTotal()));
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), "trip %s", (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_PER_DISTRACTION_SESSION: 
+            {
+              snprintf(name, sizeof(name), "PER DISTRACT");
+              float temp = scene.controls_state.getEngagedDistanceSession() / (scene.is_metric ? 1000. : 1609.);
+              temp /= MAX(1.0, float(scene.controls_state.getDistractionCountSession()));
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), "drive %s", (scene.is_metric ? "km" : "mi"));
+            }
+            break;
+
+          case UIMeasure::DISTANCE_PER_DISTRACTION_TOTAL: 
+            {
+              snprintf(name, sizeof(name), "PER DISTRACT");
+              float temp = scene.controls_state.getEngagedDistanceTotal() / (scene.is_metric ? 1000. : 1609.);
+              temp /= MAX(1.0, float(scene.controls_state.getDistractionCountTotal()));
+              if (abs(temp) >= 100.){
+                snprintf(val, sizeof(val), "%.0f", temp);
+              }
+              else if (abs(temp) >= 10.){
+                snprintf(val, sizeof(val), "%.1f", temp);
+              }
+              else{
+                snprintf(val, sizeof(val), "%.2f", temp);
+              }
+              snprintf(unit, sizeof(unit), "trip %s", (scene.is_metric ? "km" : "mi"));
             }
             break;
             
@@ -2644,11 +3125,11 @@ static void ui_draw_measures(UIState *s){
         
         int vallen = strlen(val);
         if (vallen > 4){
-          val_font_size -= (vallen - 4) * 8;
+          val_font_size -= 6 + (vallen - 4) * 8;
         }
         int unitlen = strlen(unit);
-        if (unitlen > 5){
-          unit_font_size -= (unitlen - 5) * 5;
+        if (unitlen > 4){
+          unit_font_size -= 5 + (unitlen - 4) * 4;
         }
         int slot_x = scene.measure_slots_rect.x + (scene.measure_cur_num_slots <= scene.measure_max_rows ? 0 : (i < scene.measure_max_rows ? slots_r * 2 : 0));
         int x = slot_x + slots_r - unit_font_size / 2;
@@ -2725,8 +3206,7 @@ static void ui_draw_vision_turnspeed(UIState *s) {
   }
   const float vEgo = s->scene.car_state.getVEgo();  
   auto source = s->scene.longitudinal_plan.getLongitudinalPlanSource();
-  const bool manual_long = (s->scene.car_state.getOnePedalModeActive() || s->scene.car_state.getCoastOnePedalModeActive());
-  const bool show = (turnSpeed > 0.0 && ((turnSpeed < vEgo+2.24 && !manual_long) || s->scene.show_debug_ui));
+  const bool show = (s->scene.controls_state.getActive() && turnSpeed > 0.0 && (turnSpeed < vEgo+2.24 || s->scene.show_debug_ui));
 
   if (show) {
     const Rect maxspeed_rect = {bdr_s * 2, int(bdr_s * 1.5), 184, 202};
@@ -2736,7 +3216,7 @@ static void ui_draw_vision_turnspeed(UIState *s) {
       maxspeed_rect.h};
     const float speed = turnSpeed * (s->scene.is_metric ? 3.6 : 2.2369362921);
 
-    if (vision_active){
+    if (source == cereal::LongitudinalPlan::LongitudinalPlanSource::TURN){
       // vision turn controller, so need sign of curvature to know curve direction
       int curveSign = 0;
       if (visionTurnControllerState == cereal::LongitudinalPlan::VisionTurnControllerState::ENTERING){
@@ -2761,8 +3241,7 @@ static void ui_draw_vision_turnspeed(UIState *s) {
                               curveSign, distToTurn > 0 ? distance_str.c_str() : "", "sans-bold", is_active);
     }
     else{
-      auto turnSpeedControlState = s->scene.longitudinal_plan.getTurnSpeedControlState();
-      const bool is_active = turnSpeedControlState > cereal::LongitudinalPlan::SpeedLimitControlState::TEMP_INACTIVE;
+      const bool is_active = source == cereal::LongitudinalPlan::LongitudinalPlanSource::TURNLIMIT;
 
       
 
@@ -2782,8 +3261,8 @@ static void ui_draw_vision_turnspeed(UIState *s) {
 }
 
 static void ui_draw_vision_speed(UIState *s) {
-  const float speed = std::max(0.0, (*s->sm)["carState"].getCarState().getVEgo() * (s->scene.is_metric ? 3.6 : 2.2369363));
-  const std::string speed_str = std::to_string((int)std::nearbyint(speed));
+  const int speed = s->scene.car_state.getClusterSpeed();
+  const std::string speed_str = std::to_string(speed);
   nvgTextAlign(s->vg, NVG_ALIGN_CENTER | NVG_ALIGN_BASELINE);
   ui_draw_text(s, s->fb_w / 2, 210, speed_str.c_str(), 96 * 2.5, COLOR_WHITE, "sans-bold");
   ui_draw_text(s, s->fb_w / 2, 290, s->scene.is_metric ? "km/h" : "mph", 36 * 2.5, COLOR_WHITE_ALPHA(200), "sans-regular");
@@ -2800,7 +3279,7 @@ static void ui_draw_vision_event(UIState *s) {
     const int center_x = s->fb_w - radius - bdr_s * 2;
     const int center_y = radius  + (bdr_s * 1.5);
     auto const & bg_colors_ = (s->scene.alt_engage_color_enabled ? alt_bg_colors : bg_colors);
-    const QColor &color = bg_colors_[(s->scene.car_state.getLkMode() ? s->status : UIStatus::STATUS_DISENGAGED)];
+    const QColor &color = bg_colors_[(s->scene.car_state.getLkaEnabled() ? MAX(1,s->status) : UIStatus::STATUS_DISENGAGED)];
     NVGcolor nvg_color = nvgRGBA(color.red(), color.green(), color.blue(), color.alpha());
   
     // draw circle behind wheel
@@ -2925,9 +3404,9 @@ static void ui_draw_vision_power_meter(UIState *s) {
   if (s->scene.brake_indicator_enabled && s->scene.power_meter_mode < 2){
     const int w = s->fb_w * 3 / 128;
     const int x = s->fb_w * 121 / 128 - 6;
-    int alert_offset = (*s->sm)["controlsState"].getControlsState().getAlertSize() == cereal::ControlsState::AlertSize::SMALL
+    int alert_offset = s->scene.controls_state.getAlertSize() == cereal::ControlsState::AlertSize::SMALL
                     ? s->fb_h * 7 / 32
-                     : (*s->sm)["controlsState"].getControlsState().getAlertSize() == cereal::ControlsState::AlertSize::MID
+                     : s->scene.controls_state.getAlertSize() == cereal::ControlsState::AlertSize::MID
                      ? s->fb_h * 6 / 16 : 0;
     int h = (s->scene.power_meter_mode == 0 || alert_offset ? 22 : 21) * s->fb_h / 32 - 6;
     h -= alert_offset;
@@ -3245,7 +3724,7 @@ static void ui_draw_vision_brake(UIState *s) {
 
 static void draw_lane_pos_buttons(UIState *s) {
   if (s->vipc_client->connected && s->scene.lane_pos_enabled) {
-    const int radius = ((*s->sm)["controlsState"].getControlsState().getAlertSize() == cereal::ControlsState::AlertSize::NONE && !(s->scene.map_open) ? 185 : 100);
+    const int radius = (s->scene.controls_state.getAlertSize() == cereal::ControlsState::AlertSize::NONE && !(s->scene.map_open) ? 185 : 100);
     const int right_x = (s->scene.measure_cur_num_slots > 0 
                           ? s->scene.measure_slots_rect.x - 4 * radius / 3
                           : 4 * s->fb_w / 5);
@@ -3391,6 +3870,56 @@ static void draw_accel_mode_button(UIState *s) {
   }
 }
 
+static void draw_weather(UIState *s){
+  if (s->scene.weather_info.enabled == 0){
+    return;
+  }
+  auto const & w = s->scene.weather_info;
+  const Rect max_speed_rect = {bdr_s * 2, int(bdr_s * 1.5), 184, 202};
+  if (w.display_mode == 0 || !w.valid || s->scene.map_open){
+    Rect icon_rect = {max_speed_rect.right() + 20, max_speed_rect.y - 40, 180, 180};
+    if (w.valid){
+      ui_draw_image(s, icon_rect, w.icon, 1.0);
+    }
+    else{
+      ui_draw_image(s, icon_rect, "weather_load", 1.0);
+    }
+    nvgBeginPath(s->vg);
+    nvgFontSize(s->vg, 80);
+    nvgStrokeColor(s->vg, COLOR_WHITE);
+    nvgFillColor(s->vg, COLOR_WHITE);
+    nvgTextAlign(s->vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+    nvgText(s->vg, icon_rect.centerX(), icon_rect.bottom(), w.valid ? w.desc_simple : "", NULL);
+    nvgFontSize(s->vg, 60);
+    nvgText(s->vg, icon_rect.centerX(), icon_rect.bottom() + 50, w.desc_simple1, NULL);
+    nvgText(s->vg, icon_rect.centerX(), icon_rect.bottom() + 100, w.desc_simple2, NULL);
+    s->scene.weather_touch_rect = {icon_rect.x, icon_rect.y, icon_rect.w, icon_rect.h + 100};
+  }
+  else{
+    const int x_offset = (s->scene.controls_state.getActive() || !s->scene.controls_state.getMadsEnabled()) ? 20 : 40;
+    Rect icon_rect = {max_speed_rect.right() + x_offset, max_speed_rect.y, 100, 100};
+    ui_draw_image(s, icon_rect, w.icon, 1.0);
+    nvgBeginPath(s->vg);
+    nvgStrokeColor(s->vg, COLOR_WHITE);
+    nvgFillColor(s->vg, COLOR_WHITE);
+    nvgFontSize(s->vg, 70);
+    nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+    nvgText(s->vg, icon_rect.right(), icon_rect.centerY(), w.desc_full1,NULL);
+    nvgFontSize(s->vg, 55);
+    nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+    int y = 0, dy = 50;
+    nvgText(s->vg, icon_rect.x + icon_rect.w / 5, icon_rect.bottom() - 20 + y, w.desc_full2,NULL);
+    y += dy;
+    if (w.has_precip){
+      nvgText(s->vg, icon_rect.x + icon_rect.w / 5, icon_rect.bottom() - 20 + y, w.desc_full3,NULL);
+      y += dy;
+    }
+    nvgText(s->vg, icon_rect.x + icon_rect.w / 5, icon_rect.bottom() - 20 + y, w.desc_full4,NULL);
+    y += dy;
+    s->scene.weather_touch_rect = {icon_rect.x, icon_rect.y, int(icon_rect.w * 2.5), int(icon_rect.h * 2.5)};
+  }
+}
+
 static void draw_dynamic_follow_mode_button(UIState *s) {
   if (s->vipc_client->connected && s->scene.dynamic_follow_mode_button_enabled) {
     const int radius = 72;
@@ -3425,7 +3954,7 @@ static void draw_dynamic_follow_mode_button(UIState *s) {
     nvgBeginPath(s->vg);
     nvgRoundedRect(s->vg, btn_x1, btn_y, btn_w, btn_h, radius);
     // nvgRoundedRect(s->vg, btn_x1, btn_y, btn_w, btn_h, 100);
-    const bool df_active = s->scene.dynamic_follow_active && !(s->scene.car_state.getOnePedalModeActive() || s->scene.car_state.getCoastOnePedalModeActive());
+    const bool df_active = s->scene.dynamic_follow_active && s->scene.controls_state.getActive();
     if (df_active){
       int r, g, b;
       int bg_r, bg_g, bg_b;
@@ -3566,8 +4095,8 @@ static void ui_draw_vision(UIState *s) {
   }
   // Set Speed, Current Speed, Status/Events
   ui_draw_vision_header(s);
-  if ((*s->sm)["controlsState"].getControlsState().getAlertSize() == cereal::ControlsState::AlertSize::NONE
-  || (*s->sm)["controlsState"].getControlsState().getAlertSize() == cereal::ControlsState::AlertSize::SMALL) {
+  if (s->scene.controls_state.getAlertSize() == cereal::ControlsState::AlertSize::NONE
+  || s->scene.controls_state.getAlertSize() == cereal::ControlsState::AlertSize::SMALL) {
     ui_draw_vision_face(s);
     if (s->scene.power_meter_mode < 2){
       ui_draw_vision_power_meter(s);
@@ -3576,12 +4105,14 @@ static void ui_draw_vision(UIState *s) {
       ui_draw_vision_brake(s);
       s->scene.power_meter_rect = {s->fb_w * 125 / 128, 1, 1, 1};
     }
-    if (!s->scene.map_open || (*s->sm)["controlsState"].getControlsState().getAlertSize() == cereal::ControlsState::AlertSize::NONE){
+    if (!s->scene.map_open || s->scene.controls_state.getAlertSize() == cereal::ControlsState::AlertSize::NONE){
       ui_draw_measures(s);
     }
+    draw_weather(s);
   }
-  else if ((*s->sm)["controlsState"].getControlsState().getAlertSize() == cereal::ControlsState::AlertSize::MID) {
+  else if (s->scene.controls_state.getAlertSize() == cereal::ControlsState::AlertSize::MID) {
     ui_draw_vision_face(s);
+    draw_weather(s);
     if (s->scene.power_meter_mode < 2){
       ui_draw_vision_power_meter(s);
     }
@@ -3711,7 +4242,7 @@ void ui_nvg_init(UIState *s) {
   }
 
   // init images
-  std::vector<std::pair<const char *, const char *>> images = {
+  std::vector<std::pair<const char *, const char *> > images = {
     {"eye", "../assets/img_eye_open_white.png"},
     {"wheel", "../assets/img_chffr_wheel.png"},
     {"driver_face", "../assets/img_driver_face.png"},
@@ -3721,8 +4252,28 @@ void ui_nvg_init(UIState *s) {
     {"map_source_icon", "../assets/img_world_icon.png"},
     {"brake_disk", "../assets/img_brake.png"},
     {"one_pedal_mode", "../assets/offroad/icon_car_pedal.png"},
+    {"MADS", "../assets/offroad/icon_car_MADS.png"},
     {"lane_pos_left", "../assets/offroad/icon_lane_pos_left.png"},
-    {"lane_pos_right", "../assets/offroad/icon_lane_pos_right.png"}
+    {"lane_pos_right", "../assets/offroad/icon_lane_pos_right.png"},
+    {"01d", "../assets/weather/01d.png"},
+    {"02d", "../assets/weather/02d.png"},
+    {"03d", "../assets/weather/03d.png"},
+    {"04d", "../assets/weather/04d.png"},
+    {"09d", "../assets/weather/09d.png"},
+    {"10d", "../assets/weather/10d.png"},
+    {"11d", "../assets/weather/11d.png"},
+    {"13d", "../assets/weather/13d.png"},
+    {"50d", "../assets/weather/50d.png"},
+    {"01n", "../assets/weather/01n.png"},
+    {"02n", "../assets/weather/02n.png"},
+    {"03n", "../assets/weather/03n.png"},
+    {"04n", "../assets/weather/04n.png"},
+    {"09n", "../assets/weather/09n.png"},
+    {"10n", "../assets/weather/10n.png"},
+    {"11n", "../assets/weather/11n.png"},
+    {"13n", "../assets/weather/13n.png"},
+    {"50n", "../assets/weather/50n.png"},
+    {"weather_load", "../assets/weather/weatherload.png"}
   };
   for (auto [name, file] : images) {
     s->images[name] = nvgCreateImage(s->vg, file, 1);

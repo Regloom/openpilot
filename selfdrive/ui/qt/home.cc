@@ -200,7 +200,7 @@ void HomeWindow::mousePressEvent(QMouseEvent* e) {
     && QUIState::ui_state.scene.maxspeed_touch_rect.ptInRect(e->x(), e->y())
     && QUIState::ui_state.scene.one_pedal_fade <= 0.)
   {
-    Params().putBool("Coasting", !Params().getBool("Coasting"));
+    Params().putBool("CoastingActive", !Params().getBool("CoastingActive"));
     return;
   }
   
@@ -209,13 +209,19 @@ void HomeWindow::mousePressEvent(QMouseEvent* e) {
     && QUIState::ui_state.scene.one_pedal_touch_rect.ptInRect(e->x(), e->y())
     && QUIState::ui_state.scene.one_pedal_fade > 0.)
   {
-    Params().putBool("OnePedalModeEngageOnGas", !Params().getBool("OnePedalModeEngageOnGas"));
+    Params().putBool("MADSOnePedalMode", !Params().getBool("MADSOnePedalMode"));
     return;
   }
   
   // accel_mode button
   if (QUIState::ui_state.scene.started && QUIState::ui_state.scene.accel_mode_touch_rect.ptInRect(e->x(), e->y())){
     Params().put("AccelMode", std::to_string((std::stoi(Params().get("AccelMode")) + 1) % 3).c_str(), 1);
+    return;
+  }
+
+  // weather button
+  if (QUIState::ui_state.scene.started && QUIState::ui_state.scene.weather_touch_rect.ptInRect(e->x(), e->y())){
+    Params().put("WeatherDisplayMode", std::to_string((std::stoi(Params().get("WeatherDisplayMode")) + 1) % 2).c_str(), 1);
     return;
   }
   

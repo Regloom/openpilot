@@ -35,6 +35,230 @@ TogglesPanel::TogglesPanel(QWidget *parent) : QWidget(parent) {
                                   "Use the openpilot system for adaptive cruise control and lane keep driver assistance. Your attention is required at all times to use this feature. Changing this setting takes effect when the car is powered off.",
                                   "../assets/offroad/icon_openpilot.png",
                                   this));
+
+  toggles.append(new ParamControl("MetricResetSwitch",
+                                  "On-screen information (tap me; reset)",
+                                  "When the car is on, tap the current speed to unlock edit mode, then tap more to cycle the number of metrics shown on the right side. Tap each metric to change the information displayed. Use this toggle to, upon the next vehicle start, reset the distance travelled, disengagement/intervention/interaction/distraction counts, and EV consumption and efficiency trip and 5mi/8km metrics.",
+                                  "../assets/offroad/icon_calibration.png",
+                                  this));
+  toggles.append(new ParamControl("DisableDisengageOnGas",
+                                  "Steer when gas pressed",
+                                  "Keep steering when gas (accelerator) is pressed",
+                                  "../assets/offroad/icon_car_pedal.png",
+                                  this));
+  toggles.append(new ParamControl("MADSEnabled",
+                                  "[GM] MADS (tap me)",
+                                  "MADS = Modified Assistive Driving Safety. Three independently toggle-able, always-on features: Autosteer, Lead braking, and One-pedal mode. This toggle must be enabled to use any of them. Toggle autosteer (even when brakes are pressed and before initial engagement) using the lane keep assist steering wheel button. Use cruise main to shut off all OP control. When MADS is running, the max speed is replaced by the MADS icon",
+                                  "../assets/offroad/icon_car_MADS.png",
+                                  this));
+  toggles.append(new ParamControl("MADSLeadBraking",
+                                   "MADS Lead braking (tap me)",
+                                   "Toggle by pressing the ACC distance button when MADS icon is showing. OpenPilot will smoothly stop for lead cars. Even the slightest touch of gas/brake will override lead braking. When this is enabled, an additional white circle will appear around the MADS icon.",
+                                   "../assets/offroad/icon_car_MADS.png",
+                                   this));
+  toggles.append(new ParamControl("MADSOnePedalMode",
+                                  "MADS One-pedal mode (tap me)",
+                                  "Toggle by double-pressing the Volt regen paddle or tapping the MADS icon. When active, the MADS icon will change to the colored one-pedal icon, and op will apply light braking to bring you to a stop when you're not pressing the gas pedal in L mode. One-pedal one-time stop: Hold the Volt regen paddle to below 5mph and one pedal mode will engage temporarily to stop you once, then turn off when you resume driving.",
+                                  "../assets/offroad/icon_car_pedal.png",
+                                  this));
+  toggles.append(new ParamControl("MADSPauseBlinkerSteering",
+                                  "MADS no slow blinker steer",
+                                  "When MADS is active, under 20mph with the blinker on and decelerating, steering pauses to make it easier to perform sharp turns (which may be contrary to OpenPilot's plan). Steering is unpaused when you resume acceleration or go above 20mph again.",
+                                  "../assets/offroad/icon_hands_on_wheel.png",
+                                  this));
+
+  toggles.append(new ParamControl("OPParamsLiveTuneEnabled",
+                                  "Customization over SSH (tap me)",
+                                  "opParams: Many of the features can be fine-tuned to your liking by connecting to your device over SSH and running `./opparams.py` from the `/data/openpilot/` directory. Most of the adjustable parameters are live-tunable—can be modified while driving and take effect immediately IF THIS TOGGLE IS ENABLED. If this toggle is NOT enabled, then all parameters become \"startup\" parameters where a car or OpenPilot restart is necessary for them to take effect. Changes to this toggle will take effect the next time you start your car, and you'll need to restart `opparams.py` for it to reflect the change.",
+                                  "../assets/offroad/icon_calibration.png",
+                                  this));
+
+  toggles.append(new ParamControl("OPParamsLateralOverride",
+                                  "Custom lateral override (tap me)",
+                                  "This enables the lateral tune specified in opParams.",
+                                  "../assets/offroad/icon_calibration.png",
+                                  this));
+
+  toggles.append(new ParamControl("OPParamsLongitudinalOverride",
+                                  "Custom long override (tap me)",
+                                  "This enables the longitudinal tune specified in opParams.",
+                                  "../assets/offroad/icon_calibration.png",
+                                  this));
+  
+  toggles.append(new ParamControl("LongRangeLeadsEnabled",
+                                  "Longer-range lead detection (beta)",
+                                  "This also allows for 10-20\% longer range detection using radar and the cars LKA camera.",
+                                  "../assets/offroad/icon_plus.png",
+                                  this));
+
+  toggles.append(new ParamControl("ExtendedRadar",
+                                  "Extended radar capabilities (alpha)",
+                                  "Enables tracking of all cars; not just the one openpilot lead. Necessary for braking for car in front of lead, longer-range lead detection, traffic-based auto lane position, drawing of oncoming/ongoing lanes, and indication of non-lead cars.",
+                                  "../assets/offroad/icon_plus.png",
+                                  this));
+  toggles.append(new ParamControl("TurnVisionControl",
+                                  "Enable vision based turn control",
+                                  "Use vision path predictions to estimate the appropiate speed to drive through turns ahead.",
+                                  "../assets/offroad/icon_slow_curves_vision.png",
+                                  this));
+  toggles.append(new ParamControl("TurnSpeedControl",
+                                  "Enable Map Data Turn Control",
+                                  "Use curvature info from map data to define speed limits to take turns ahead",
+                                  "../assets/offroad/icon_slow_curves_map.png",
+                                  this));
+  toggles.append(new ParamControl("SpeedLimitControl",
+                                  "Enable Speed Limit Control",
+                                  "Use speed limit signs information from map data and car interface to automatically adapt cruise speed to road limits.",
+                                  "../assets/offroad/icon_speed_limit_sign.png",
+                                  this));
+  toggles.append(new ParamControl("EUSpeedLimitStyle",
+                                  "Show EU style speed limit sign",
+                                  "If enabled, show EU style circular sign. If disabled, show US/Canada style rectangular sign.",
+                                  "../assets/offroad/icon_speed_limit_sign.png",
+                                  this));
+  toggles.append(new ParamControl("SpeedLimitPercOffset",
+                                  "Enable Speed Limit Offset",
+                                  "Set speed limit slightly higher than actual speed limit for a more natural drive.",
+                                  "../assets/offroad/icon_speed_limit_percent.png",
+                                  this));
+  toggles.append(new ParamControl("ReverseSpeedAdjust",
+                                  "Reverse cruise speed adjustment",
+                                  "Reverse of stock behavior, press/hold the accel/decel buttons to change by 5mph/1mph.",
+                                  "../assets/offroad/icon_stock_adjust_speed.png",
+                                  this));
+  toggles.append(new ParamControl("CruiseSpeedOffset",
+                                  "Enable Cruise Speed Offset (+3mph)",
+                                  "When adjusting, cruise speed will be {8, 13, 18, 23, 28} mph.",
+                                  "../assets/offroad/icon_speed_offset.png",
+                                  this));
+  toggles.append(new ParamControl("LanePositionEnabled",
+                                  "Adjustable lane position",
+                                  "Adds onscreen arrows to the left and right sides of the onroad screen that can be used to adjust lane position temporarily. Tap both arrows in succession to enable automatic mode that keeps you away from other traffic when in the far-left or far-right lanes.",
+                                  "../assets/offroad/icon_road.png",
+                                  this));
+  toggles.append(new ParamControl("AutoAutoLanePosition",
+                                  "Auto auto lane position",
+                                  "Automatically enable automatic lane position when you're going 10mph+, lanelines are clear, and there's traffic. Automatic lane position keeps you farther from adjacent traffic when possible/safe.",
+                                  "../assets/offroad/icon_road.png",
+                                  this));
+  toggles.append(new ParamControl("AccelModeButton",
+                                  "Acceleration profiles",
+                                  "Cycle between normal, sport, and eco acceleration profiles.",
+                                  "../assets/offroad/icon_rocket.png",
+                                  this));
+  toggles.append(new ParamControl("DynamicFollowToggle",
+                                  "Dynamic follow",
+                                  "Automatically (and imperceptibly) switch between close/medium/far follow profiles based on speed and traffic.",
+                                  "../assets/offroad/icon_road.png",
+                                  this));
+  toggles.append(new ParamControl("NudgelessLaneChange",
+                                  "Nudgeless lane change (1s delay) ⚠️",
+                                  "Perform lane change without requiring nudge from driver",
+                                  "../assets/offroad/icon_hands_on_wheel.png",
+                                  this));
+  toggles.append(new ParamControl("GMAutoHold",
+                                  "[GM] Enable AutoHold",
+                                  "Holds brakes automatically after coming to a complete stop, even when OP is disengaged.",
+                                  "../assets/offroad/icon_gm_autohold.png",
+                                  this));
+  toggles.append(new ParamControl("Coasting",
+                                  "[GM] Coasting (tap me)",
+                                  "OP will allow the car to coast above the set speed rather than use engine/regen/friction braking. If this toggle is enabled, then you can toggle coasting while driving by tapping the on-screen max speed indicator, but you can only disable coasting while driving if you're traveling below your set speed (or at any speed if you have the \"Engine/regen braking\" toggle enabled).",
+                                  "../assets/offroad/icon_car_pedal.png",
+                                  this));
+  toggles.append(new ParamControl("CoastingBrakeOverSpeed",
+                                  "[GM] Coast: brake 15% over set speed",
+                                  "When coasting, start applying cruise braking when 15% over set speed.",
+                                  "../assets/offroad/icon_speed_offset.png",
+                                  this));
+  toggles.append(new ParamControl("CoastingDL",
+                                  "[Volt] D/L coast control",
+                                  "Tie the above option to the D/L gear shifter position. Coast in D; maintain set speed exactly in L.",
+                                  "../assets/offroad/icon_gear_shifter.png",
+                                  this));
+  toggles.append(new ParamControl("RegenBraking",
+                                  "[GM] Engine/regen braking",
+                                  "Disable friction braking when OP is slowing to maintain cruise/speed limit; still brake for following/curves",
+                                  "../assets/img_brake.png",
+                                  this));
+  toggles.append(new ParamControl("BrakeIndicator",
+                                  "[GM] Power/Brake indicator",
+                                  "Brake indicator at bottom-right when driving or power meter to right. Tap indicator or meter to change. Circle at indicator center grows and turns red to indicate the level of braking. Pulses immediately after starting car to let you know it's on.",
+                                  "../assets/offroad/icon_brake_disc.png",
+                                  this));
+  toggles.append(new ParamControl("CustomSounds",
+                                  "Alternative sounds",
+                                  "Uses alternative set of sound effects.",
+                                  "../assets/offroad/icon_custom_sounds.png",
+                                  this));
+  toggles.append(new ParamControl("SilentEngageDisengage",
+                                  "Silent engage/disengage",
+                                  "Mute engage and disengage sounds.",
+                                  "../assets/offroad/icon_mute.png",
+                                  this));
+  toggles.append(new ParamControl("IgnoreMissingNVME",
+                                  "Ignore missing NVME",
+                                  "Prevent an error about missing NVME drive from showing on 32GB C3's. (restart device for change to take effect)",
+                                  "../assets/offroad/icon_settings.png",
+                                  this));
+  toggles.append(new ParamControl("GrayPandaSupport",
+                                  "Gray panda support",
+                                  "Necessary to run on gray panda",
+                                  "../assets/offroad/icon_settings.png",
+                                  this));
+  toggles.append(new ParamControl("FPVolt",
+                                  "Volt fingerprint",
+                                  "Forces Volt fingerprint",
+                                  "../assets/offroad/icon_settings.png",
+                                  this));
+  toggles.append(new ParamControl("LowOverheadMode",
+                                  "Lower device overhead",
+                                  "Decreases device power, CPU, and storage use for running better on older hardware by: 1) defaulting to medium brightness (tap DM icon to change), 2) disable onroad logging (loggerd and proclogd). Your device will not keep or upload logs with this enabled!",
+                                  "../assets/offroad/icon_settings.png",
+                                  this));
+  toggles.append(new ParamControl("WeatherDisplayEnabled",
+                                  "Display weather info",
+                                  "Tap weather info to cycle between simple and full layouts. If you want, enter your own OpenWeatherMap.org api key into /data/OpenWeatherMap_apiKey.txt",
+                                  "../assets/weather/10n.png",
+                                  this));
+  toggles.append(new ParamControl("WeatherSafetyEnabled",
+                                  "Weather safety",
+                                  "OpenPilot will automatically use softer acceleration, softer curve braking, follow traffic farther, or lower the speed limit offset in use. If you want, enter your own OpenWeatherMap.org api key into /data/OpenWeatherMap_apiKey.txt",
+                                  "../assets/weather/10n.png",
+                                  this));
+  toggles.append(new ParamControl("ColorPath",
+                                  "Colored path",
+                                  "Color path according to the amount of lateral (steering) correction being applied",
+                                  "../assets/offroad/icon_road.png",
+                                  this));
+  toggles.append(new ParamControl("AlternateColors",
+                                  "Alternate colors",
+                                  "Use alternate color set.",
+                                  "../assets/offroad/icon_road.png",
+                                  this));
+  toggles.append(new ParamControl("AdjacentPaths",
+                                  "Adjacent oncoming/ongoing paths",
+                                  "[Requires extended radar toggle] Draw paths to indicate whether adjacent lanes contain oncoming (red) or ongoing (green) traffic.",
+                                  "../assets/offroad/icon_road.png",
+                                  this));
+  toggles.append(new ParamControl("PrintLeadInfo",
+                                  "Print lead car info",
+                                  "Prints lead car time and length distance, and absolute and relative velocity next to lead indicator",
+                                  "../assets/offroad/icon_metric.png",
+                                  this));
+  toggles.append(new ParamControl("PrintAdjacentLeadSpeeds",
+                                  "Indicate all cars",
+                                  "[Requires extended radar toggle] Print speeds of all cars being tracked by radar and/or vision. Tap at screen bottom in the middle of the path to toggle display modes between printing inside the indicator or along the bottom of the screen, out from the center to the left/right in order of distance, so the numbers closest to the center are for the more immediate cars. Cars are also indicated onscreen as oncoming (red) or ongoing (green).",
+                                  "../assets/offroad/icon_metric.png",
+                                  this));
+
+  toggles.append(new ParamControl("EnableTorqueControl",
+                                  "Enable \"torque\" steering control",
+                                  "(Restart car to take effect) Use the newer torque-based steering control that steers by achieving a target amount of lateral acceleration rather than achieving a target steering angle. Torque tune is only available in the Volt.",
+                                  "../assets/offroad/icon_openpilot.png",
+                                  this));
+
+
   toggles.append(new ParamControl("IsLdwEnabled",
                                   "Enable Lane Departure Warnings",
                                   "Receive alerts to steer back into the lane when your vehicle drifts over a detected lane line without a turn signal activated while driving over 31mph (50kph).",
@@ -74,210 +298,11 @@ TogglesPanel::TogglesPanel(QWidget *parent) : QWidget(parent) {
                                   "In this mode openpilot will ignore lanelines and just drive how it thinks a human would.",
                                   "../assets/offroad/icon_road.png",
                                   this));
-
-  toggles.append(new ParamControl("EVConsumptionReset",
-                                  "Reset trip/EV metrics",
-                                  "Upon the next vehicle start, reset the distance travelled and EV consumption and efficiency trip and 5mi/8km metrics to 0.",
-                                  "../assets/offroad/icon_calibration.png",
-                                  this));
-  
-  toggles.append(new ParamControl("LongRangeLeadsEnabled",
-                                  "Longer-range lead detection (alpha)",
-                                  "Use the much longer-range lead detection ability of the car's LKA camera to detect leads up to 40\% farther than stock openpilot.  This also allows for 10\% longer range detection using radar.",
-                                  "../assets/offroad/icon_plus.png",
-                                  this));
-
-  toggles.append(new ParamControl("ExtendedRadar",
-                                  "Extended radar capabilities (alpha)",
-                                  "Enables tracking of all cars; not just the one openpilot lead. Necessary for braking for car in front of lead, longer-range lead detection, traffic-based auto lane position, drawing of oncoming/ongoing lanes, and indication of non-lead cars.",
-                                  "../assets/offroad/icon_plus.png",
-                                  this));
-
-  toggles.append(new ParamControl("EnableTorqueControl",
-                                  "Enable \"torque\" steering control",
-                                  "(Restart car to take effect) Use the newer torque-based steering control that steers by achieving a target amount of lateral acceleration rather than achieving a target steering angle. Torque tune is only available in the Volt.",
-                                  "../assets/offroad/icon_openpilot.png",
-                                  this));
   
   toggles.append(new ParamControl("HandsOnWheelMonitoring",
                                   "Enable Hands on Wheel Monitoring",
                                   "Monitor and alert when driver is not keeping the hands on the steering wheel.",
                                   "../assets/offroad/icon_hands_on_wheel.png",
-                                  this));
-  toggles.append(new ParamControl("TurnVisionControl",
-                                  "Enable vision based turn control",
-                                  "Use vision path predictions to estimate the appropiate speed to drive through turns ahead.",
-                                  "../assets/offroad/icon_slow_curves_vision.png",
-                                  this));
-  toggles.append(new ParamControl("TurnSpeedControl",
-                                  "Enable Map Data Turn Control",
-                                  "Use curvature info from map data to define speed limits to take turns ahead",
-                                  "../assets/offroad/icon_slow_curves_map.png",
-                                  this));
-  toggles.append(new ParamControl("SpeedLimitControl",
-                                  "Enable Speed Limit Control",
-                                  "Use speed limit signs information from map data and car interface to automatically adapt cruise speed to road limits.",
-                                  "../assets/offroad/icon_speed_limit_sign.png",
-                                  this));
-  toggles.append(new ParamControl("EUSpeedLimitStyle",
-                                  "Show EU style speed limit sign",
-                                  "If enabled, show EU style circular sign. If disabled, show US/Canada style rectangular sign.",
-                                  "../assets/offroad/icon_speed_limit_sign.png",
-                                  this));
-  toggles.append(new ParamControl("SpeedLimitPercOffset",
-                                  "Enable Speed Limit Offset",
-                                  "Set speed limit slightly higher than actual speed limit for a more natural drive.",
-                                  "../assets/offroad/icon_speed_limit_percent.png",
-                                  this));
-  toggles.append(new ParamControl("ReverseSpeedAdjust",
-                                  "Reverse cruise speed adjustment",
-                                  "Reverse of stock behavior, press/hold the accel/decel buttons to change by 5mph/1mph.",
-                                  "../assets/offroad/icon_stock_adjust_speed.png",
-                                  this));
-  toggles.append(new ParamControl("CruiseSpeedOffset",
-                                  "Enable Cruise Speed Offset (+3mph)",
-                                  "When adjusting, cruise speed will be {8, 13, 18, 23, 28} mph.",
-                                  "../assets/offroad/icon_speed_offset.png",
-                                  this));
-  toggles.append(new ParamControl("DisableDisengageOnGas",
-                                  "Disable disengage on gas",
-                                  "Disable default comma stock disengage on gas feature",
-                                  "../assets/offroad/icon_car_pedal.png",
-                                  this));
-  toggles.append(new ParamControl("LanePositionEnabled",
-                                  "Adjustable lane position",
-                                  "Adds onscreen arrows to the left and right sides of the onroad screen that can be used to adjust lane position temporarily. Tap both arrows in succession to enable automatic mode that keeps you away from other traffic when in the far-left or far-right lanes.",
-                                  "../assets/offroad/icon_road.png",
-                                  this));
-  toggles.append(new ParamControl("AutoAutoLanePosition",
-                                  "Auto auto lane position",
-                                  "Automatically enable automatic lane position when you're going 10mph+, lanelines are clear, and there's traffic. Automatic lane position keeps you farther from adjacent traffic when possible/safe.",
-                                  "../assets/offroad/icon_road.png",
-                                  this));
-  toggles.append(new ParamControl("AccelModeButton",
-                                  "Acceleration profiles",
-                                  "Cycle between normal, sport, and eco acceleration profiles.",
-                                  "../assets/offroad/icon_rocket.png",
-                                  this));
-  toggles.append(new ParamControl("DynamicFollowToggle",
-                                  "Dynamic follow",
-                                  "Automatically (and imperceptibly) switch between close/medium/far follow profiles based on speed and traffic.",
-                                  "../assets/offroad/icon_road.png",
-                                  this));
-  toggles.append(new ParamControl("NudgelessLaneChange",
-                                  "Nudgeless lane change (1s delay) ⚠️",
-                                  "Perform lane change without requiring nudge from driver",
-                                  "../assets/offroad/icon_hands_on_wheel.png",
-                                  this));
-  toggles.append(new ParamControl("GMAutoHold",
-                                  "[GM] Enable AutoHold",
-                                  "Holds brakes automatically after coming to a complete stop, even when OP is disengaged.",
-                                  "../assets/offroad/icon_gm_autohold.png",
-                                  this));
-  toggles.append(new ParamControl("Coasting",
-                                  "[GM] Coasting (tap me)",
-                                  "OP will allow the car to coast above the set speed rather than use engine/regen/friction braking. If you also have the \"Brake indicator\" toggle enabled, you can toggle coasting while driving by tapping the brake indicator, but you can only disable coasting while driving if you're traveling below your set speed (or at any speed if you have the \"Engine/regen braking\" toggle enabled).",
-                                  "../assets/offroad/icon_car_pedal.png",
-                                  this));
-  toggles.append(new ParamControl("CoastingBrakeOverSpeed",
-                                  "[GM] Coast: brake 15% over set speed",
-                                  "When coasting, start applying cruise braking when 15% over set speed.",
-                                  "../assets/offroad/icon_speed_offset.png",
-                                  this));
-  toggles.append(new ParamControl("CoastingDL",
-                                  "[Volt] D/L coast control",
-                                  "Tie the above option to the D/L gear shifter position. Coast in D; maintain set speed exactly in L.",
-                                  "../assets/offroad/icon_gear_shifter.png",
-                                  this));
-  toggles.append(new ParamControl("RegenBraking",
-                                  "[GM] Engine/regen braking",
-                                  "Disable friction braking when OP is slowing to maintain cruise/speed limit; still brake for following/curves",
-                                  "../assets/img_brake.png",
-                                  this));
-  toggles.append(new ParamControl("OnePedalMode",
-                                  "[GM] One-pedal mode (tap me)",
-                                  "In combination with the \"Disable disengage on gas\" option, you control speed with gas pedal (with optional, adjustable braking) while OP continues to steer and brake for lead car following. To activate, ① (see \"One-pedal/Always-on-steering engage on gas\" below) set cruise speed to 1 and pedal icon will replace max speed indicator; set/resume button to return to normal cruise. ② Tap pedal icon to toggle one-pedal mode (see below). If one-pedal mode is active, then vehicle follow distance indicator and pedal icon color indicate the one-pedal braking profile in use; 1/2/3 = (⚫️)/🟢/🟠/🔴 = (regen/engine)/light/moderate/heavy braking. ③ Press follow distance button to toggle between persistent light/moderate braking; hold for temporary heavy braking. ④ Toggle between friction 🟢/🟠/🔴 and regen/engine ⚫️ braking by tapping the pedal icon or by using the follow distance button; one press will activating friction braking if not active, and a double press while the gas pedal is pressed, or while stopped, will deactivate friction braking.",
-                                  "../assets/offroad/icon_car_pedal.png",
-                                  this));
-  toggles.append(new ParamControl("OnePedalModeSimple",
-                                   "[GM] One-pedal pro brakes ⚠️",
-                                   "When using one-pedal mode, COMPLETELY DISABLE ALL OTHER FORMS OF OPENPILOT BRAKING. No additional braking will be automatically applied to slow/stop you behind a lead car, or to slow for a curve. You are solely responsible for applying brakes using adjustable one-pedal braking with the follow button or using the actual brakes.",
-                                   "../assets/offroad/icon_car_pedal.png",
-                                   this));
-  toggles.append(new ParamControl("OnePedalDLCoasting",
-                                  "[Volt] One-pedal D/L coast",
-                                  "When in one-pedal mode with regen braking ⚫️ active, regen will only be used when in L mode. In D, no braking whatsoever will be applied while you are not pressing the gas. (In fact a light press will result in more braking than no press at all)",
-                                  "../assets/offroad/icon_gear_shifter.png",
-                                  this));
-  toggles.append(new ParamControl("OnePedalModeEngageOnGas",
-                                  "[GM] One-pedal engage on gas (EoG)",
-                                  "When you press the gas in cruise mode at speed (i.e. not when resuming from a stop), enter one-pedal/always-on-steering mode. Increase or reset speed to return to normal cruise.",
-                                  "../assets/offroad/icon_car_pedal.png",
-                                  this));
-  toggles.append(new ParamControl("OnePedalDLEngageOnGas",
-                                  "[Volt] One-pedal D/L EoG",
-                                  "Tie the above option to the gear shifter D/L position. Off in D; on in L.",
-                                  "../assets/offroad/icon_gear_shifter.png",
-                                  this));
-  toggles.append(new ParamControl("OnePedalPauseBlinkerSteering",
-                                  "One-pedal no slow blinker steer",
-                                  "When in one-pedal mode, under 20mph with the blinker on, steering is paused to make it easier to perform sharp turns.",
-                                  "../assets/offroad/icon_hands_on_wheel.png",
-                                  this));
-  toggles.append(new ParamControl("BrakeIndicator",
-                                  "[GM] Power/Brake indicator",
-                                  "Brake indicator at bottom-right when driving or power meter to right. Tap indicator or meter to change. Circle at indicator center grows and turns red to indicate the level of braking. Pulses immediately after starting car to let you know it's on.",
-                                  "../assets/offroad/icon_brake_disc.png",
-                                  this));
-  toggles.append(new ParamControl("CustomSounds",
-                                  "Alternative sounds",
-                                  "Uses alternative set of sound effects.",
-                                  "../assets/offroad/icon_custom_sounds.png",
-                                  this));
-  toggles.append(new ParamControl("SilentEngageDisengage",
-                                  "Silent engage/disengage",
-                                  "Mute engage and disengage sounds.",
-                                  "../assets/offroad/icon_mute.png",
-                                  this));
-  toggles.append(new ParamControl("IgnoreMissingNVME",
-                                  "Ignore missing NVME",
-                                  "Prevent an error about missing NVME drive from showing on 32GB C3's. (restart device for change to take effect)",
-                                  "../assets/offroad/icon_settings.png",
-                                  this));
-  toggles.append(new ParamControl("FPVolt",
-                                  "Volt Fingerprint",
-                                  "Forces Volt fingerprint",
-                                  "../assets/offroad/icon_settings.png",
-                                  this));
-  toggles.append(new ParamControl("LowOverheadMode",
-                                  "Lower device overhead",
-                                  "Decreases device power, CPU, and storage use for running better on older hardware by: 1) defaulting to medium brightness (tap DM icon to change), 2) disable onroad logging (loggerd and proclogd). Your device will not keep or upload logs with this enabled!",
-                                  "../assets/offroad/icon_settings.png",
-                                  this));
-  toggles.append(new ParamControl("ColorPath",
-                                  "Colored path",
-                                  "Color path according to the amount of lateral (steering) correction being applied",
-                                  "../assets/offroad/icon_road.png",
-                                  this));
-  toggles.append(new ParamControl("AlternateColors",
-                                  "Alternate colors",
-                                  "Use alternate color set.",
-                                  "../assets/offroad/icon_road.png",
-                                  this));
-  toggles.append(new ParamControl("AdjacentPaths",
-                                  "Adjacent oncoming/ongoing paths",
-                                  "[Requires extended radar toggle] Draw paths to indicate whether adjacent lanes contain oncoming (red) or ongoing (green) traffic.",
-                                  "../assets/offroad/icon_road.png",
-                                  this));
-  toggles.append(new ParamControl("PrintLeadInfo",
-                                  "Print lead car info",
-                                  "Prints lead car time and length distance, and absolute and relative velocity next to lead indicator",
-                                  "../assets/offroad/icon_metric.png",
-                                  this));
-  toggles.append(new ParamControl("PrintAdjacentLeadSpeeds",
-                                  "Indicate all cars",
-                                  "[Requires extended radar toggle] Print speeds of all cars being tracked by radar and/or vision. Tap at screen bottom in the middle of the path to toggle display modes between printing inside the indicator or along the bottom of the screen, out from the center to the left/right in order of distance, so the numbers closest to the center are for the more immediate cars. Cars are also indicated onscreen as oncoming (red) or ongoing (green).",
-                                  "../assets/offroad/icon_metric.png",
                                   this));
   toggles.append(new ParamControl("ShowDebugUI",
                                   "Show debug UI elements",

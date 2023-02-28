@@ -1,18 +1,22 @@
+### Which fork do you want?
+> **If you want "my" fork, read on.** 
+> If you're looking for my SunnyPilot fork, with improved gm controls and auto brake hold, use the following installer URL on your device, but head to the SunnyPilot github for more info.
+**`installer.comma.ai/twilsonco/sunny-test-c3`**
+Please (at least partially) direct your support for the SunnyPilot fork to SunnyPilot directly.
+
 # Table of Contents
 ------
 - [Table of Contents](#table-of-contents)
     - [Infographics](#infographics)
     - [Appreciate My Work?](#appreciate-my-work)
 - [Fork Details](#fork-details)
-      - [Current Fork Features \[✅ = optional via toggle\]:](#current-fork-features---optional-via-toggle)
-      - [Planned Fork Features (in no particular order):](#planned-fork-features-in-no-particular-order)
-    - [Supported Hardware](#supported-hardware)
-    - [Installation Instructions](#installation-instructions)
-      - [Easy: using sshane's openpilot-installer-generator](#easy-using-sshanes-openpilot-installer-generator)
-      - [Less easy](#less-easy)
-    - [Automatic Updates](#automatic-updates)
-    - [Tuning](#tuning)
-      - [Lateral Tuning](#lateral-tuning)
+  - [Current Fork Features](#current-fork-features---optional-via-toggle)
+  - [Planned Fork Features](#planned-fork-features-in-no-particular-order)
+  - [Supported Hardware](#supported-hardware)
+  - [Installation Instructions](#installation-instructions)
+  - [Automatic Updates](#automatic-updates)
+  - [Tuning](#tuning)
+  - [Lateral Tuning](#lateral-tuning)
 - [Commaai Table of Contents](#commaai-table-of-contents)
   - [What is openpilot?](#what-is-openpilot)
   - [Running in a car](#running-in-a-car)
@@ -26,17 +30,15 @@
 ### Infographics
 ------
 ![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_touchcontrols.png?raw=true)
-![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_onepedal.png?raw=true)
 ![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_coasting.png?raw=true)
 ![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_lane_position.png?raw=true)
-![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_brake_indicator.png?raw=true)
 ![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_metrics.png?raw=true)
 ![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_misc.png?raw=true)
 
 ### Appreciate My Work?
 ------
 
-Please show your support by contributing to the ongoing development of this project.
+Check out the [commit history](https://github.com/twilsonco/openpilot/commits/tw-0.8.9-dev) of `tw-0.8.9-dev` to see the ongoing work you can support.
 
 **[Patreon (recurring contributions)](https://www.patreon.com/twilsonco)**
 
@@ -46,152 +48,14 @@ Please show your support by contributing to the ongoing development of this proj
 ------
 
 > This fork exists to improve OP performance and convenience for GM cars, specifically the Chevy Volt.
-> I started because the kegman fork wouldn't run on Comma Three, and the result is the best Volt driving experience in the known universe.
+> I started because the *kegman* fork wouldn't run on Comma Three, and the result is the best Volt driving experience in the known universe.
 
 > While most of the features in this fork are my original implementations, none of it would have been possible without the work of others in the community, which is often my starting point or inspiration, and nearly always a reference.
 > I reference code/concepts to their original authors to the best of my knowledge.
 > Feel free to let me know if I have missed or mistaken a reference.
 
-> **Pleae provide any positive/negative feedback on Patreon or the comma/openpilot/retropilot Discord servers, especially if you'd like your issues addressed.**
+> **Pleae provide any positive/negative feedback to me, twilsonco#9281, on the [comma](https://discord.comma.ai)/[openpilot](https://discord.gg/SgbgsdGWu5)/[retropilot](https://discord.gg/retropilot-660951518014341124) Discord servers, especially if you'd like your issues addressed.**
 
-#### Current Fork Features [✅ = optional via toggle]:
------
-
-**Running on move-fast fork of openpilot v0.8.9**, which adds:
-
-* Vision and/or map-based slowing down for curves
-* Map-based automatic changing of speed limit (with optional offset)
-  * **Map-based slowing for curves and automatic setting of speed requires a data connection**
-  * You can subscribe to [comma Prime](https://comma.ai/prime), which is a great service and is totally worth the cost, or you can use your own hotspot and enable the "disable onroad uploads" toggle (see below) to only use data for these features
-* ~~Hands on wheel monitoring~~ *In stock*
-* ~~Disable disengage when gas pressed~~ *Now in stock*
-
-**Additional fork features:**
-
-- [x] Running openpilot 0.8.12 lateral (last of the medium-models) and 0.8.10 driver monitoring models
-- [x] [Comma3] AGNOS4 OS
-- [x] [Volt/Acadia] Alternate lateral (steering) tunes using the new "torque" controller
-- [Volt] Much improved steering control over stock (working on upstreaming)
-- [x] [Volt 2017] Auto-resume behind stopped lead car as they pull away; a.k.a. stop and go (ported from kegman)
-- [x] [Volt 2018] Auto-creep behind stopped lead car as they pull away (tap gas or resume button to resume)
-- [x] [GM] [✅] AutoHold (autohold brakes when stopped; ported from kegman)
-- [x] [GM] Adjustable follow "mode" using ACC distance button (ported from kegman, but smoother follow profiles)
-- [x] [✅] Extended radar capabilities (ALPHA)
-    * Brake for car in front of lead, avoiding pile-ups and able to brake when lead changes lanes right in front of a column of stopped cars
-    * Indicate adjacent oncoming/ongoing traffic
-    * Indicate all tracked cars, including those in front of the lead, and print all speeds
-    * Tap at screen bottom-center (middle of path) to switch where speeds are printed
-- [x] [✅] Longer range lead detection, indicated by blue dot over lead indicator
-    * 10% more range using radar, or
-    * up to 40% more range using the Volt LKA camera's VOACC capabilities, which have been incorporated into openpilot
-- [x] [✅] Print lead info: lead distance (length and time) and speed (absolute and relative) are printed to the sides of the lead indicator
-- [x] [✅] Adjustable lane position using onscreen buttons
-    * Tap buttons to change lane position for 1/3 mile; double-tap to change for 10 miles
-    * Tap again to go back to center position
-- [x] Automatic lane position: if adjacent traffic on one side and not the other, assume opposite lane position
-    * To activate, enable adjustable lane position, then while onroad, tap left then right (or right then left) lane position button within 2s.
-    * Tap either button to deactivate
-    * Requires clear lanelines, and a mostly-straight road
-- [x] [✅] Automatic automatic lane position (you heard me)
-    * Turns on automatic lane positioning automatically when at 22mph+ with clear lanelines and adjacent traffic is present
-- [x] [GM] [✅] Dynamic follow mode (WIP)
-- [x] [GM] Toggle steering with LKAS button (wheel color changes to indicate disengagement)
-- [x] [GM] One-pedal driving a.k.a. autosteering only a.k.a. toggle longitudinal control: using regen (volt) and/or light/moderate/heavy braking, control OP all the way to a stop, without a lead, and without disengaging, with just the gas pedal (see below) (application of friction brakes originally suggested by cybertronicify — 10/06/2021)
-    * extra braking is applied automatically for stopping behind leads
-- [x] [✅] [Dynamic Lane Profile](https://github.com/sunnyhaibin/openpilot#dynamic-lane-profile-dlp) (DLP); *tap button while driving to switch between auto/laneless/lane-only. must enable "Disable use of lanelines" for button to appear* (ported from sunnyhaibin)
-- [x] [✅] Normal/sport/eco acceleration modes [cycle with on-screen button] (adapted from kegman implementation)
-    * Eco mode is great for
-      * the environment (you pig),
-      * not over-accelerating behind a jumpy lead in traffic, and 
-      * softer acceleration when exiting curves (if curve braking is enabled).
-- [x] [✅] Reverse speed adjustment; tap/hold for 5mph/1mph increments (ported from Spector56; different from that of newer stock OP)
-- [x] [✅] 3mph cruise speed offset: speed will be 23/28/33/38/etc.
-- [x] [✅] Alternate color scheme
-- [x] [✅] Alternate sound effect set (inspired by sunnyhaibin implementation of mute sounds)
-- [x] [✅] Mute engage and disengage sounds (inspired by sunnyhaibin implementation)
-- [x] Brightness control: Tap driver monitoring icon to cycle stock/medium/low brightness (most recently suggested by veryluckyguy)
-    * Screen will temporarily undim for warning/critical alerts
-- [x] [✅] Disable onroad uploads: for use with data-limited wifi hotspots. Reduces data use from 400MB/hour or 22MB/mile (based on 30 minute low-speed trip) down to 25MB/hour or 0.4MB/mile (based on 5 hour trip at 84mph; i.e. not a perfect comparison to the other trip)
-    * Don't bother if you subscribe to [comma Prime](https://comma.ai/prime), which has unlimited data, and a host of other benefits! Don't delay; subscribe today!!
-    * iPhone users can use [this shortcut](https://www.icloud.com/shortcuts/7f3c7e98f95d4f85a9bad939aa069fcd) to instantly open the personal hotspot page in the Settings app in order to enable personal hotspot for your comma device to connect.
-      * Combined with an Automation to run the shortcut when you enter CarPlay, or when you connect to your car's Bluetooth, this can be a pretty convenience setup.
-    * Android users could try the [Hot Spot Starter](https://play.google.com/store/apps/details?id=de.thjunge11.autohotspot) app, but I can't recommend it as I haven't tried it, so maybe [look for something else if it doesn't work](https://forum.xda-developers.com/t/enable-hotspot-automatically-when-i-enter-the-car.3915107/)
-- [x] [✅] Coasting: OP will still brake behind a lead car and to slow down for curves, but will not apply engine/regen/friction brakes in order to keep the set speed (by user or map speed limit)
-    * Toggle coasting while driving 
-      * in Volt using gear shifter: D for coasting, L for regen (thanks to jshuler for discovering the CAN message of extra gear shifter values)
-      * in other cars by tapping the max speed indicator
-    * A "+" after the max speed indicates that coasting is enabled
-    * *Can be a bit rough on the brakes when following downhill over set speed; recommend to disable if uncomfortable when constantly following downhill*
-    * (Inspired by the implementation in sunnyhaibin's fork)
-- [x] [✅] Brake when 15% over set speed when coasting enabled
-- [x] [Volt] [✅] Coasting D/L control: Tie the above option to the D/L gear shifter position. Coast in D; maintain set speed exactly in L.
-- [x] [✅] Auto "nudgeless" lane change: OP will start lane change automatically in direction of blinker after blinker on for 1.5s
-    * Won't auto lane change if adjacent lane is not detected, or if oncoming traffic in adjacent lanes
-    * Alert will tell you when/why auto lane change is blocked
-- [x] Lane change alerts warn you if changing lanes when adjacent lane not detected or when oncoming traffic in adjacent lane
-- [x] [✅] Power meter (or brake indicator) shows level of regenerative/engine and friction braking
-    * Power meter shows lines for losses due to drag, rolling resistance, and elevation gain (in that order from bottom to top on the meter), and differentiates between regen and brake power
-    * Tap brake indicator or power meter to switch between indicator, meter, or meter + power readout
-    * Tap power readout to switch units from kw to hp
-- [x] **Customizable, dynamic vehicle/device metrics** (adapted from kegman)
-    * To use:
-        * Tap the current speed on the openpilot display to cycle the number of metrics
-        * Tap any metric to cycle its content (sorry for all the god-forsaken tapping, a better metric display with vehicle, following, position, and device widgets is a WIP)
-    * Metrics (79 to choose from):
-        * Device info: CPU temperature (°C and °F), CPU percent, CPU temp + percent (°C and °F), memory temperature (°C and °F), memory used, free storage, ambient temperature (°C and °F), fanspeed (as percent of max), GPS accuracy (and number of satelites), altitude
-        * Vehicle info: Time since driver interaction, time since driver intervention, time since driver distraction, Engine RPM, engine coolant temperature (°C and °F), engine RPM + coolant temperature (°C and °F), steering torque, steering angle, desired steering angle, vehicle acceleration, vehicle jerk, lane width, distance from lane center, percent grade of current road (one based on GPS, one based on device accelerometer), Volt high-voltage battery wattage [kW], voltage [V], current [A], voltage+wattage, drag force/power, brake force/power, regen force/power, electric motor force/power, gas engine power, total acceleration force/power, EV efficiency (instantaneous, 5 mile average, total), EV power consumption (instant/5mi/total), EV instantaneous efficiency/consumption (depending on sign), EV drivetrain efficiency (amount of power making it to the tires),  
-        * Lead/traffic info: follow distance level, lead distance [length], desired lead distance [length], lead distance [time], desired lead distance [time], follow distance and acceleration mpc costs [in units of the stock OP costs; i.e. 2.5 means 2.5× the stock OP value], relative lead velocity, absolute lead velocity, number of cars (total, ongoing, oncoming, stopped, ongoing in adjacent lanes), minimum follow distance of ongoing cars in adjacent lanes
-        * ...and others
-- [x] [GM] [✅] **One-pedal driving**: OP will apply light to heavy braking when you let completely off the gas, allowing you to come to a full stop and resume without OP disengaging
-    * **Not necessary to enable the one-pedal toggle; you engage/disengage while driving**
-    * Engage in three ways
-      1. While cruise is set, press and hold the follow distance button for 0.5s (continue to hold for immediate hard braking if necessary)
-      2. If one-pedal engage on gas toggle is enabled, press gas while cruise is set and traveling above 1mph
-      3. While cruise is set, lower cruise speed to 1
-    * When in one-pedal mode, the max speed indicator in openpilot will be replaced with a one-pedal mode indicator. Tap the one-pedal icon to toggle one-pedal engage on gas mode
-    * Vehicle follow distance indicator and pedal icon color indicate the one-pedal braking profile in use; 1 bar/2 bar/3 bar = (⚫️)/🟢/🟠/🔴 = (regen-engine)/light/moderate/heavy braking
-    * Control braking with follow distance button:
-      * *Single press*: alternate between persistent light or moderate 🟢/🟠 braking
-      * *Press and hold*: apply temporary hard braking 🔴 (Chevy's the ones that decided a brake paddle on the steering wheel was a good idea; not me)
-      * *Press when friction braking disabled*: activate friction braking 🟢
-      * *Double-press when stopped or when gas is pressed and friction braking is active*: deactivate friction braking/activate regen/engine braking ⚫️
-    * [Volt] Coasting: using gear shifter, select D for coasting or L for regen (thanks to jshuler)
-    * When one-pedal mode active and blinker is on below 20mph, autosteer will automatically pause
-      * [Optional; tap wheel icon to toggle while in one-pedal mode]
-      * A second white circle around the wheel icon indicates autosteer pause is enabled
-    * *Must have disable disengage on gas toggle enabled*
-- [x] [Volt] [✅] One-pedal D/L coasting: In one-pedal regen/engine ⚫️ braking mode in D, no braking whatsoever will be applied. Shift to L for max regen. Happy hypermiling!
-- [x] [GM] [✅] One-pedal engage on gas: When cruising at speed and the driver presses the gas (i.e. not when resuming from a stop), engage one-pedal mode
-    * Toggle while one-pedal mode enabled by tapping the pedal icon
-    * Indiated by an extra circle around one-pedal icon
-- [x] [Volt] [✅] One-pedal D/L engage on gas: tie the engage on gas setting to the D/L gear shifter position. Off in D; on in L. (suggested by Shadowlight5)
-- [x] [GM] panda-based GM steering fault fix (thanks jshuler)
-- [x] Remember last follow mode (ported from kegman)
-- [x] Grey/White panda support
-
-#### Planned Fork Features (in no particular order):
------
-
-- [ ] Stop-and-go for 2018 Volt
-- [ ] Chevy Bolt support
-- [ ] Record screen button
-- [ ] Auto engage parking brake
-- [ ] ~~Live tuner~~ Auto tuning
-- [ ] Redo UI metrics as themed "widgets" instead that can be activated independently and stack against the right (and left if necessary) side of the screen
-  * Follow widget: a colored vertical bar indicating follow distance with lines indicating the actual and desired (length/time) follow distances. Tap to include more info items like current distance cost
-  * Openpilot widget: a similar vertical bar (or maybe something like a circular progress bar or a speedometer--looking thing) showing the gas/braking being requested by OP. Also include Driver monitoring info.
-  * Car widget: Acceleration/jerk, tire pressures, low voltage battery info, ...
-  * Geo widget: GPS signal/coords/#satellites, altitude, percent grade of current road, ...
-  * Device widget: CPU/memory/temps/fans/...
-  * EV widget: high voltage battery info similar to that shown in the LeafSpyPro app
-- [ ] [✅] [Modified assistive driving system](https://github.com/sunnyhaibin/openpilot#modified-assistive-driving-safety-mads) (MADS) style auto-engagement of steering
-- [ ] [Chevy Volt] Steering control below 7mph using parking commands
-- [ ] [Chevy Volt] [✅] Road trip mode: automatically put car into Mountain Mode (i.e. hold at 20% battery charge) if sustained speed 55mph+
-- [ ] [GM] Use physical drive mode button to switch between normal/sport acceleration profiles
-* Metrics to add:
-    - [ ] number of interventions/cut-ins during drive session
-    - [ ] time since last intervention/cut-in
-    - [ ] apply gas/apply brake
 
 ### Supported Hardware
 ------
@@ -201,17 +65,16 @@ This fork is developed and used on a Comma Three in a 2018 Chevy Volt, and is al
 ### Installation Instructions
 ------
 
-#### Easy: using sshane's [openpilot-installer-generator](https://github.com/sshane/openpilot-installer-generator)
+#### Easy: using comma's [openpilot-installer-generator](https://github.com/sshane/openpilot-installer-generator)
 
-Use [these instructions](https://github.com/sshane/openpilot-installer-generator#usage) and the following url:
+For fewer, but better tested updates, use `installer.comma.ai/twilsonco`,
+or to ride the bleeding edge, try the staging branch where new features are tested before they go to regular users: `installer.comma.ai/twilsonco/tw-0.8.9-staging`
+(*Be extra diligent and attentive when using the staging branch; it is considered experimental moreso than the regular branch!*)
+
+Or using Shane's installer with [these instructions](https://github.com/sshane/openpilot-installer-generator#usage) and the following url:
 `https://smiskol.com/fork/twilsonco`
 
-Or use Comma's installer the same way: `https://www.installer.comma.ai/twilsonco`
 
-
-To ride the bleeding edge, try the staging branch where new features are tested before they go to regular users:
-(Be extra diligent and attentive when using the staging branch; it is considered experimental moreso than the regular branch!)
-`https://smiskol.com/fork/twilsonco/tw-0.8.9-staging`
 
 #### Less easy
 
@@ -226,6 +89,145 @@ Then, `sudo reboot`
 
 This fork will auto-update while your device has internet access, and changes are automatically applied the next time the device restarts.
 If you're device stays connected to your car all the time, you'll be presented with a message to update when your car is off.
+
+#### Current Fork Features [✅ = optional via toggle]:
+-----
+
+**Running on move-fast fork of openpilot v0.8.9**, which adds:
+
+* **Vision and/or map-based slowing down for curves**
+* **Map-based automatic changing of speed limit** (with optional offset)
+  * **Map-based slowing for curves and automatic setting of speed requires a data connection**
+  * You can subscribe to [comma Prime](https://comma.ai/prime), which is a great service and is totally worth the cost, or you can use your own hotspot and enable the "disable onroad uploads" toggle (see below) to only use data for these features
+* ~~Hands on wheel monitoring~~ *In stock*
+* ~~Disable disengage when gas pressed~~ *Now in stock*
+
+**Additional fork features:**
+
+- [x] Running openpilot 0.8.12 lateral (last of the medium-models) and 0.8.10 driver monitoring models
+- [x] [Comma3] AGNOS4 OS
+- [x] [✅] [Volt/Acadia] **Alternate lateral** (steering) tunes using the new "torque" controller
+- [Volt] Much improved steering control over stock (working on upstreaming)
+- [x] [✅] **MADS (Modified Assistive Driving Safety)**. Three independent, always-on safety features. Enable the MADS autosteer toggle in order to access the other features as well. If enabled, the max speed indicator is replaced by the MADS icon. *Reminder: You can use the cruise main button to cancel out all openpilot controls*. 
+    * ***Autosteer*** (a.k.a. SunnyHaibin's MADS) comes on as soon as you start driving the car, before initially engaging, and even while brakes are pressed. *Toggle autosteer with the lane keep assist button on your steering wheel*. Optional toggle in settings to pause steering at low speeds when blinker is on and you're decelerating. When autosteer is enabled, the steering wheel icon will be colored ("disengaged" color when disabled).
+    * ***Lead braking*** will be applied automatically, so OpenPilot will smoothly slow for other cars *if neither the gas or brake pedal are pressed in the slightest*. Volt regen-on-demand paddle can be used and lead braking will still be applied. Use either pedal to override lead braking. *Toggle lead braking with the ACC follow distance button on your steering wheel*. When lead braking is enabled, an additional white ring is shown around the MADS icon.
+    * ***One-pedal driving*** [Volt only], where OpenPilot applies light braking when you're in L-mode and not pressing the gas, so you can come to a stop without using brakes. The feeling is as if L-mode regen braking brought you to a stop. Hold the regen-on-demand paddle for additional braking. *Toggle one-pedal driving with a double-press of the regen paddle*. You can also toggle one-pedal driving by tapping the MADS icon. When one-pedal driving is enabled, the MADS icon turns to the "engaged" color, or the "disengaged" color when disabled. (application of friction brakes originally suggested by cybertronicify — 10/06/2021)
+    * ***One-pedal one-time stop***. Hold the Volt regen paddle to below 5mph and one pedal mode will engage temporarily to stop you once, then turn off when you resume driving.
+- [x] [Volt 2017] **Auto-resume** behind stopped lead car as they pull away; a.k.a. stop and go (ported from kegman)
+- [x] [Volt 2018] **Auto-creep** behind stopped lead car as they pull away (tap gas or resume button to resume)
+- [x] [GM] [✅] **AutoHold** (autohold brakes when stopped; ported from kegman)
+- [x] [GM] Adjustable follow "mode" using ACC distance button (ported from kegman, but smoother follow profiles)
+- [x] [✅] **Extended radar capabilities**
+    * Brake for car in front of lead, avoiding pile-ups and able to brake when lead changes lanes right in front of a column of stopped cars
+    * Indicate adjacent oncoming/ongoing traffic
+    * Indicate all tracked cars, including those in front of the lead, and print all speeds
+    * Tap at screen bottom-center (middle of path) to switch where speeds are printed
+- [x] [✅] **Longer range lead detection**, indicated by blue dot over lead indicator
+    * 10% more range using radar, or
+    * up to 40% more range using the Volt LKA camera's VOACC capabilities, which have been incorporated into openpilot
+- [x] [✅] **Print lead details**: lead distance (length and time) and speed (absolute and relative) are printed to the sides of the lead indicator
+- [x] [✅] **Adjustable lane position** using onscreen buttons
+    * Tap buttons to change lane position for 1/3 mile; double-tap to change for 10 miles
+    * Tap again to go back to center position
+- [x] [✅] **Automatic lane position**: if adjacent traffic on one side and not the other, assume opposite lane position
+    * To activate, enable adjustable lane position, then while onroad, tap left then right (or right then left) lane position button within 2s.
+    * Tap either button to deactivate
+    * Requires clear lanelines, and a mostly-straight road
+    * [✅] **Automatic automatic lane position** (you heard me) turns on automatic lane positioning automatically when at 22mph+ with clear lanelines and adjacent traffic is present
+- [x] [GM] [✅] **Dynamic follow mode**: Defensive driving triggered by a cut-in or by adjacent ongoing traffic's average following distance (the less chill they drive, the more defensive OpenPilot gets)
+- [x] [GM] **Toggle steering while openpilot is engaged with the LKAS button** (wheel color changes to indicate disengagement)
+- [x] [✅] [**Dynamic Lane Profile**](https://github.com/sunnyhaibin/openpilot#dynamic-lane-profile-dlp) (DLP); *tap button while driving to switch between auto/laneless/lane-only. must enable "Disable use of lanelines" for button to appear* (ported from sunnyhaibin)
+- [x] [✅] **Normal/sport/eco acceleration modes** [cycle with on-screen button] (adapted from kegman implementation)
+    * Eco mode is great for
+      * the environment (you pig),
+      * not over-accelerating behind a jumpy lead in traffic, and 
+      * softer acceleration when exiting curves (if curve braking is enabled).
+- [x] [✅] **Reverse speed adjustment**; tap/hold for 5mph/1mph increments (ported from Spector56; different from that of newer stock OP)
+- [x] [✅] **3mph cruise speed offset**: speed will be 23/28/33/38/etc.
+- [x] [✅] **Alternate color scheme**
+- [x] [✅] **Alternate sound effect set** (inspired by sunnyhaibin implementation of mute sounds)
+- [x] [✅] **Mute engage and disengage sounds** (inspired by sunnyhaibin implementation)
+- [x] **Brightness control**: Tap driver monitoring icon to cycle stock/medium/low brightness (most recently suggested by veryluckyguy)
+    * Screen will temporarily undim for warning/critical alerts
+- [x] [✅] **Disable onroad uploads**: for use with data-limited wifi hotspots. Reduces data use from 400MB/hour or 22MB/mile (based on 30 minute low-speed trip) down to 25MB/hour or 0.4MB/mile (based on 5 hour trip at 84mph; i.e. not a perfect comparison to the other trip)
+    * Don't bother if you subscribe to [comma Prime](https://comma.ai/prime), which has unlimited data, and a host of other benefits! Don't delay; subscribe today!!
+    * iPhone users can use [this shortcut](https://www.icloud.com/shortcuts/7f3c7e98f95d4f85a9bad939aa069fcd) to instantly open the personal hotspot page in the Settings app in order to enable personal hotspot for your comma device to connect.
+      * Combined with an Automation to run the shortcut when you enter CarPlay, or when you connect to your car's Bluetooth, this can be a pretty convenience setup.
+    * Android users could try the [Hot Spot Starter](https://play.google.com/store/apps/details?id=de.thjunge11.autohotspot) app, but I can't recommend it as I haven't tried it, so maybe [look for something else if it doesn't work](https://forum.xda-developers.com/t/enable-hotspot-automatically-when-i-enter-the-car.3915107/)
+- [x] [✅] **Over-speed coasting**: OP will still brake behind a lead car and to slow down for curves, but will not apply engine/regen/friction brakes in order to keep the set speed (by user or map speed limit)
+    * Toggle coasting while driving 
+      * in Volt using gear shifter: D for coasting, L for regen (thanks to jshuler for discovering the CAN message of extra gear shifter values)
+      * in other cars by tapping the max speed indicator
+    * A "+" after the max speed indicates that coasting is enabled
+    * *Can be a bit rough on the brakes when following downhill over set speed; recommend to disable if uncomfortable when constantly following downhill*
+    * (Inspired by the implementation in sunnyhaibin's fork)
+    * [✅] Additional toggle to apply a **reasonable upper speed limit for coasting**, 15% over set speed at 20mph down to 12% over at 80mph
+    * [Volt] [✅] **Coasting D/L control**: Control over-speed coasting when cruising with the D/L gear shifter position. Coast in D; maintain set speed exactly in L.
+- [x] [✅] **Auto "nudgeless" lane change**: OP will start lane change automatically in direction of blinker after blinker on for 1.5s
+    * Won't auto lane change if adjacent lane is not detected, or if oncoming traffic in adjacent lanes
+    * Alert will tell you when/why auto lane change is blocked
+    * Lane change alerts warn you if changing lanes when adjacent lane not detected or when oncoming traffic in adjacent lane
+- [x] [✅] *Local weather information* using OpenWeatherMap.org. Tap the weather icon to switch between simple/full display modes. You can use the provided API key or enter your own into `/data/OpenWeatherMap_apiKey.txt`
+- [x] [✅] *Weather-based safety* using OpenWeatherMap.org. Openpilot will automatically use far follow, mild acceleration, and less intense braking for curves when in inclement weather. You can use the provided API key or enter your own into `/data/OpenWeatherMap_apiKey.txt`
+- [x] [✅] **Power meter** (or brake indicator) shows level of regenerative/engine and friction braking
+    * Power meter shows lines for losses due to drag, rolling resistance, and elevation gain (in that order from bottom to top on the meter), and differentiates between regen and brake power
+    * Tap brake indicator or power meter to switch between indicator, meter, or meter + power readout
+    * Tap power readout to switch units from kw to hp
+- [x] **Customizable, dynamic vehicle/device metrics** (adapted from kegman)
+    * To use:
+        * Tap the current speed on the openpilot display to cycle the number of metrics
+        * Tap any metric to cycle its content (sorry for all the god-forsaken tapping, a better metric display with vehicle, following, position, and device widgets is a WIP)
+    * Metrics (79 to choose from):
+        * Device info: CPU temperature (°C and °F), CPU percent, CPU temp + percent (°C and °F), memory temperature (°C and °F), memory used, free storage, ambient temperature (°C and °F), fanspeed (as percent of max), GPS accuracy (and number of satelites), altitude
+        * Vehicle info: Engine RPM, engine coolant temperature (°C and °F), engine RPM + coolant temperature (°C and °F), steering torque, steering angle, desired steering angle, vehicle acceleration, vehicle jerk, lane width, distance from lane center, percent grade of current road (one based on GPS, one based on device accelerometer), Volt high-voltage battery wattage [kW], voltage [V], current [A], voltage+wattage, drag force/power, brake force/power, regen force/power, electric motor force/power, gas engine power, total acceleration force/power, EV efficiency (instantaneous, 5 mile average, total), EV power consumption (instant/5mi/total), EV instantaneous efficiency/consumption (depending on sign), EV drivetrain efficiency (amount of power making it to the tires),  
+        * Lead/traffic info: follow distance level, lead distance [length], desired lead distance [length], lead distance [time], desired lead distance [time], follow distance and acceleration mpc costs [in units of the stock OP costs; i.e. 2.5 means 2.5× the stock OP value], relative lead velocity, absolute lead velocity, number of cars (total, ongoing, oncoming, stopped, ongoing in adjacent lanes), minimum follow distance of ongoing cars in adjacent lanes
+        * Engagement and interaction statistics
+          * Time driving (drive or trip)
+          * Time openpilot fully engaged (drive or trip)
+          * Percent time openpilot fully engaged (drive or trip)
+          * Distance driven (drive or trip)
+          * Distance openpilot fully engaged (since last engage, drive, or trip)
+          * Percent distance openpilot fully engaged (drive or trip)
+          * Time since last disengagement (also for interaction, intervention, distraction)
+          * Distance since last disengagement (also for interaction, intervention, distraction)
+          * Count of disengagements (drive or trip; also for interactions, interventions, distractions)
+          * Time per disengagement (drive or trip; also for interactions, interventions, distractions)
+          * Distance per disengagement (drive or trip; also for interactions, interventions, distractions)
+        * ...and others
+- [x] [GM] panda-based GM steering fault fix (thanks jshuler)
+- [x] Remember last follow mode (ported from kegman)
+- [x] Grey/White panda support
+- [x] **opParams**: command-line editor to configure and tune OpenPilot instantaneously from the passenger seat. You can tune run `./opparams.py` immediately after [connecting over SSH](https://docs.comma.ai/tools/ssh/README.html#) and configure the following:
+    * acceleration profiles
+    * traffic following profiles
+    * camera (lane) offset
+    * offroad shutdown timer and car 12v cutoff
+    * over-speed coasting
+    * assisted (and nudgeless) lane change
+    * MADS (autosteer, one-pedal mode)
+    * curve braking
+    * automatic speed limits
+    * adjustable/automatic lane positioning
+    * traffic detection
+    * lateral (six of them!) and longitudinal controllers
+      * *can select and tune pid, torque, indi, lqr, torque indi, or torque lqr controllers*
+    * select UI metrics (no more tapping! you can still tap though)
+    * enter your own OpenWeatherMap api key (instead of freeloading off mine!)
+    * *perform a reboot-less restart on your Comma Three by running `./opparams.py -r`*
+    * *Started from @Shane's opParams implementation and added TONS of features. Thanks Shane!*
+
+#### Planned Fork Features (in no particular order):
+-----
+
+- [ ] Chevy Bolt support
+- [ ] Record screen button
+- [ ] Redo UI metrics as themed "widgets" instead that can be activated independently and stack against the right (and left if necessary) side of the screen
+  * Follow widget: a colored vertical bar indicating follow distance with lines indicating the actual and desired (length/time) follow distances. Tap to include more info items like current distance cost
+  * Openpilot widget: a similar vertical bar (or maybe something like a circular progress bar or a speedometer--looking thing) showing the gas/braking being requested by OP. Also include Driver monitoring info.
+  * Car widget: Acceleration/jerk, tire pressures, low voltage battery info, ...
+  * Geo widget: GPS signal/coords/#satellites, altitude, percent grade of current road, ...
+  * Device widget: CPU/memory/temps/fans/...
+  * EV widget: high voltage battery info similar to that shown in the LeafSpyPro app
 
 ### Tuning
 ------
@@ -256,28 +258,14 @@ If you're device stays connected to your car all the time, you'll be presented w
 Commaai Table of Contents
 =======================
 
-- [Table of Contents](#table-of-contents)
-    - [Infographics](#infographics)
-    - [Appreciate My Work?](#appreciate-my-work)
-- [Fork Details](#fork-details)
-      - [Current Fork Features \[✅ = optional via toggle\]:](#current-fork-features---optional-via-toggle)
-      - [Planned Fork Features (in no particular order):](#planned-fork-features-in-no-particular-order)
-    - [Supported Hardware](#supported-hardware)
-    - [Installation Instructions](#installation-instructions)
-      - [Easy: using sshane's openpilot-installer-generator](#easy-using-sshanes-openpilot-installer-generator)
-      - [Less easy](#less-easy)
-    - [Automatic Updates](#automatic-updates)
-    - [Tuning](#tuning)
-      - [Lateral Tuning](#lateral-tuning)
-- [Commaai Table of Contents](#commaai-table-of-contents)
-  - [What is openpilot?](#what-is-openpilot)
-  - [Running in a car](#running-in-a-car)
-  - [Running on PC](#running-on-pc)
-  - [Community and Contributing](#community-and-contributing)
-  - [User Data and comma Account](#user-data-and-comma-account)
-  - [Safety and Testing](#safety-and-testing)
-  - [Directory Structure](#directory-structure)
-  - [Licensing](#licensing)
+- [What is openpilot?](#what-is-openpilot)
+- [Running in a car](#running-in-a-car)
+- [Running on PC](#running-on-pc)
+- [Community and Contributing](#community-and-contributing)
+- [User Data and comma Account](#user-data-and-comma-account)
+- [Safety and Testing](#safety-and-testing)
+- [Directory Structure](#directory-structure)
+- [Licensing](#licensing)
 
 ---
 
