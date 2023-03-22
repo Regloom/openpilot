@@ -142,27 +142,27 @@ class CarInterface(CarInterfaceBase):
   # Volt determined by iteratively plotting and minimizing error for f(angle, speed) = steer.
   @staticmethod
   def get_steer_feedforward_volt_torque(desired_lateral_accel, v_ego):
-    ANGLE_COEF = 0.15461558
-    ANGLE_COEF2 = 0.22491234
-    ANGLE_OFFSET = -0.01173257
-    SPEED_OFFSET = 2.37065180
-    SIGMOID_COEF_RIGHT = 0.14917052
-    SIGMOID_COEF_LEFT = 0.13559770
-    SPEED_COEF = 0.49912791
-    SPEED_COEF2 = 0.37766423
-    SPEED_OFFSET2 = -0.36618369
-    return get_steer_feedforward_erf1(desired_lateral_accel, v_ego, ANGLE_COEF, ANGLE_COEF2, ANGLE_OFFSET, SPEED_OFFSET, SIGMOID_COEF_RIGHT, SIGMOID_COEF_LEFT, SPEED_COEF, SPEED_COEF2, SPEED_OFFSET2)
+    ANGLE_COEF = 0.10513119
+    ANGLE_COEF2 = 0.10000000
+    ANGLE_OFFSET = -0.01230698
+    SPEED_OFFSET = -0.42555387
+    SIGMOID_COEF_RIGHT = 0.65189115
+    SIGMOID_COEF_LEFT = 0.57953135
+    SPEED_COEF = 0.65295089
+    return get_steer_feedforward_erf(desired_lateral_accel, v_ego, ANGLE_COEF, ANGLE_COEF2, ANGLE_OFFSET, SPEED_OFFSET, SIGMOID_COEF_RIGHT, SIGMOID_COEF_LEFT, SPEED_COEF)
   
   @staticmethod
   def get_steer_feedforward_torque_lat_jerk_volt(jerk, speed, lateral_acceleration, friction, friction_threshold):
     if sign(lateral_acceleration) == sign(jerk):
-      ANGLE_COEF = 2.87742908
-      ANGLE_COEF2 = 3.0171422
-      SPEED_OFFSET = 0.32037237
-      SIGMOID_COEF_1 = 0.13778183
-      SIGMOID_COEF_2 = 0.78604993
-      SPEED_COEF = 0.11084122
-      SPEED_COEF2 = 1.84607376
+      # entering curve
+      ANGLE_COEF = 5.00000000
+      ANGLE_COEF2 = 0.18950076
+      ANGLE_OFFSET = 15.00059323
+      SPEED_OFFSET = -1.32036601
+      SIGMOID_COEF_1 = 0.11900164
+      SIGMOID_COEF_2 = 1.42607235
+      SPEED_COEF = 0.47329761
+      SPEED_COEF2 = 1.88198222
 
       x = ANGLE_COEF * (jerk) * (40.23 / (max(1.0,speed + SPEED_OFFSET))**SPEED_COEF)
       sigmoid1 = x / (1. + fabs(x))
@@ -174,14 +174,15 @@ class CarInterface(CarInterfaceBase):
 
       out = sigmoid1 + sigmoid2
     else:
-      ANGLE_COEF = 2.06223884
-      ANGLE_COEF2 = 0.17299524
-      ANGLE_OFFSET = 10.08002596
-      SPEED_OFFSET = -0.11092718
-      SIGMOID_COEF_1 = 0.17167717
-      SIGMOID_COEF_2 = 1.99966155
-      SPEED_COEF = 1.04884478
-      SPEED_COEF2 = 2.00000000
+      # exiting curve
+      ANGLE_COEF = 4.99683211
+      ANGLE_COEF2 = 0.03618608
+      ANGLE_OFFSET = 15.00000144
+      SPEED_OFFSET = -1.23191266
+      SIGMOID_COEF_1 = 0.22412302
+      SIGMOID_COEF_2 = 1.99877713
+      SPEED_COEF = 1.35854322
+      SPEED_COEF2 = 1.50516678
       
       x = ANGLE_COEF * (jerk) * (40.23 / (max(1.0,speed + SPEED_OFFSET))**SPEED_COEF)
       sigmoid1 = x / (1. + fabs(x))
@@ -195,11 +196,8 @@ class CarInterface(CarInterfaceBase):
       speed_norm = 0.5 * cos(clip(speed / max_speed, 0., 1.) * 3.14) + 0.5
       
       out = (1-speed_norm) * sigmoid1 + speed_norm * sigmoid2
-    if friction >= 0.0:
-      linear = friction * jerk
-      return sign(jerk) * min(abs(out), abs(linear))
-    else:
-      return out
+      
+    return out * friction
 
 
   @staticmethod
@@ -332,11 +330,11 @@ class CarInterface(CarInterfaceBase):
       if (Params().get_bool("EnableTorqueControl")):
         ret.lateralTuning.init('torque')
         ret.lateralTuning.torque.useSteeringAngle = True
-        ret.lateralTuning.torque.kp = 0.48
-        ret.lateralTuning.torque.ki = 0.11
-        ret.lateralTuning.torque.kd = 0.02
+        ret.lateralTuning.torque.kp = 0.45
+        ret.lateralTuning.torque.ki = 0.08
+        ret.lateralTuning.torque.kd = 0.03
         ret.lateralTuning.torque.kf = 1.0 # use with custom torque ff
-        ret.lateralTuning.torque.friction = -1.0 # for custom lateral jerk ff
+        ret.lateralTuning.torque.friction = 1.0 # for custom lateral jerk ff
       else:
         ret.lateralTuning.pid.kpBP = [0., 40.]
         ret.lateralTuning.pid.kpV = [0., .16]
