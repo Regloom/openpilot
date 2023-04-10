@@ -1,6 +1,8 @@
 import os
 import time
 import shutil
+import numpy as np
+import json
 from typing import Dict
 
 from cereal import car
@@ -23,6 +25,52 @@ MAX_CTRL_SPEED = (V_CRUISE_MAX + 4) * CV.KPH_TO_MS  # 135 + 4 = 86 mph
 ACCEL_MAX = 2.0
 ACCEL_MIN = -3.5
 
+class FluxModel:
+    def __init__(self, params_file, zero_bias=True):
+        with open(params_file, "r") as f:
+            params = json.load(f)
+
+        self.input_size = params["input_size"]
+        self.output_size = params["output_size"]
+        self.input_mean = np.array(params["input_mean"], dtype=np.float32).T
+        self.input_std = np.array(params["input_std"], dtype=np.float32).T
+        self.layers = []
+
+        for layer_params in params["layers"]:
+            W = np.array(layer_params[next(key for key in layer_params.keys() if key.endswith('_W'))], dtype=np.float32)
+            b = np.array(layer_params[next(key for key in layer_params.keys() if key.endswith('_b'))], dtype=np.float32)
+            if zero_bias:
+              b = np.zeros_like(b)
+            activation = layer_params["activation"]
+            self.layers.append((W, b, activation))
+
+    def sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def identity(self, x):
+        return x
+
+    def forward(self, x):
+        for W, b, activation in self.layers:
+            if activation == 'σ':
+                x = self.sigmoid(x.dot(W) + b)
+            elif activation == 'identity':
+                x = self.identity(x.dot(W) + b)
+            else:
+                raise ValueError(f"Unknown activation: {activation}")
+        return x
+
+    def evaluate(self, input_array):
+        input_array = np.array(input_array, dtype=np.float32)#.reshape(1, -1)
+
+        if input_array.shape[-1] != self.input_size:
+            raise ValueError(f"Input array last dimension {input_array.shape[-1]} does not match the expected length {self.input_size}")
+        # Rescale the input array using the input_mean and input_std
+        input_array = (input_array - self.input_mean) / self.input_std
+
+        output_array = self.forward(input_array)
+
+        return float(output_array[0, 0])
 
 # generic car and radar interfaces
 
@@ -37,6 +85,8 @@ class CarInterfaceBase():
     self.low_speed_alert = False
     self.driver_interacted = False
     self.screen_tapped = False
+    
+    self.ff_nn_model = None
 
     self.MADS_enabled = Params().get_bool("MADSEnabled")
     self.MADS_alert_mode = 0
@@ -55,6 +105,9 @@ class CarInterfaceBase():
     self.CC = None
     if CarController is not None:
       self.CC = CarController(self.cp.dbc_name, CP, self.VM)
+  
+  def get_ff_nn(self, v_ego, lateral_accel, lateral_jerk, lateral_g_accel):
+    return self.ff_nn_model.evaluate([v_ego, lateral_accel, lateral_jerk, -lateral_g_accel])
 
   @staticmethod
   def get_pid_accel_limits(CP, current_speed, cruise_speed, CI = None):
@@ -83,7 +136,15 @@ class CarInterfaceBase():
     return desired_lateral_accel
   
   @staticmethod
-  def get_steer_feedforward_function_torque_lat_jerk_default(desired_lateral_jerk, v_ego, desired_lateral_acceleration, friction, friction_threshold):
+  def get_steer_feedforward_torque_nn_default(v_ego, desired_lateral_accel, desired_lateral_jerk, lateral_accel_g):
+    return desired_lateral_accel
+  
+  @staticmethod
+  def get_steer_feedforward_function_torque_roll_default(g_lat_accel, v_ego):
+    return g_lat_accel
+  
+  @staticmethod
+  def get_steer_feedforward_function_torque_lat_jerk_default(desired_lateral_jerk, v_ego, desired_lateral_acceleration, friction, friction_threshold, g_lat_accel):
     if friction < 0.0:
       f = 0.0
     else:
@@ -101,8 +162,16 @@ class CarInterfaceBase():
     return CarInterfaceBase.get_steer_feedforward_torque_default
   
   @staticmethod
+  def initialize_feedforward_function_torque_nn():
+    return CarInterfaceBase.get_steer_feedforward_torque_nn_default
+  
+  @staticmethod
   def get_steer_feedforward_function_torque_lat_jerk():
     return CarInterfaceBase.get_steer_feedforward_function_torque_lat_jerk_default
+  
+  @staticmethod
+  def get_steer_feedforward_function_torque_roll():
+    return CarInterfaceBase.get_steer_feedforward_function_torque_roll_default
 
   # returns a set of default params to avoid repetition in car specific params
   @staticmethod

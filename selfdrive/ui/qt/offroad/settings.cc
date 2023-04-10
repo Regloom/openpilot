@@ -90,6 +90,12 @@ TogglesPanel::TogglesPanel(QWidget *parent) : QWidget(parent) {
                                   "This enables the longitudinal tune specified in opParams.",
                                   "../assets/offroad/icon_calibration.png",
                                   this));
+
+  toggles.append(new ParamControl("OPParamsReset",
+                                  "Reset OPParams to defaults",
+                                  "If enabled, then the next time OPParams runs, by starting openpilot or by running ./opparams.py, all parameters will be reset to their default values. This toggle will then be disabled.",
+                                  "../assets/offroad/icon_calibration.png",
+                                  this));
   
   toggles.append(new ParamControl("LongRangeLeadsEnabled",
                                   "Longer-range lead detection (beta)",
@@ -271,6 +277,12 @@ TogglesPanel::TogglesPanel(QWidget *parent) : QWidget(parent) {
   toggles.append(new ParamControl("EnableTorqueControl",
                                   "Enable \"torque\" steering control",
                                   "(Restart car to take effect) Use the newer torque-based steering control that steers by achieving a target amount of lateral acceleration rather than achieving a target steering angle. Torque tune is only available in the Volt.",
+                                  "../assets/offroad/icon_openpilot.png",
+                                  this));
+
+  toggles.append(new ParamControl("EnableTorqueNNFF",
+                                  "\"torque\" neural network feedforward",
+                                  "(Restart car to take effect) Use the experimental neural network feedforward instead of the composite, three-part feedforward (which is still completely derived from car data).",
                                   "../assets/offroad/icon_openpilot.png",
                                   this));
 
