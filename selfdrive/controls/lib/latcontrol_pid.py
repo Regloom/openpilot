@@ -1,5 +1,6 @@
 import math
 
+from common.op_params import opParams
 from selfdrive.controls.lib.pid import PIDController
 from selfdrive.controls.lib.drive_helpers import get_steer_max
 from selfdrive.config import Conversions as CV
@@ -8,23 +9,40 @@ from cereal import log
 
 class LatControlPID():
   def __init__(self, CP, CI):
+    self._op_params = opParams(calling_function="latcontrol_pid.py")
     self.pid = PIDController((CP.lateralTuning.pid.kpBP, CP.lateralTuning.pid.kpV),
                              (CP.lateralTuning.pid.kiBP, CP.lateralTuning.pid.kiV),
                              (CP.lateralTuning.pid.kdBP, CP.lateralTuning.pid.kdV),
                              k_11 = 0.5, k_12 = 1., k_13 = 2., k_period=0.1,
                              k_f=CP.lateralTuning.pid.kf, pos_limit=1.0, neg_limit=-1.0,
-                             sat_limit=CP.steerLimitTimer, derivative_period=0.1)
+                             sat_limit=CP.steerLimitTimer,
+                             derivative_period=0.1)
     self.get_steer_feedforward = CI.get_steer_feedforward_function()
+    self.roll_k = 1.0
+    self.tune_override = self._op_params.get('TUNE_LAT_do_override', force_update=True)
+
+  def update_op_params(self):
+    if not self.tune_override:
+      return
+    bp = [i * CV.MPH_TO_MS for i in self._op_params.get(f"TUNE_LAT_PID_bp_mph")]
+    self.pid._k_p = [bp, self._op_params.get("TUNE_LAT_PID_kp")]
+    self.pid._k_i = [bp, self._op_params.get("TUNE_LAT_PID_ki")]
+    self.pid._k_d = [bp, self._op_params.get("TUNE_LAT_PID_kd")]
+    self.pid._k_11 = [[0], [self._op_params.get('TUNE_LAT_PID_kp_e')]]
+    self.pid._k_12 = [[0], [self._op_params.get('TUNE_LAT_PID_ki_e')]]
+    self.pid._k_13 = [[0], [self._op_params.get('TUNE_LAT_PID_kd_e')]]
+    self.pid.k_f = self._op_params.get('TUNE_LAT_PID_kf')
+    self.roll_k = self._op_params.get('TUNE_LAT_PID_roll_compensation')
 
   def reset(self):
     self.pid.reset()
 
-  def update(self, active, CS, CP, VM, params, desired_curvature, desired_curvature_rate, llk = None):
+  def update(self, active, CS, CP, VM, params, desired_curvature, desired_curvature_rate, llk = None, use_roll=True, lat_plan=None):
     pid_log = log.ControlsState.LateralPIDState.new_message()
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+    angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll * self.roll_k if use_roll else 0.0))
     angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
 
     pid_log.angleError = angle_steers_des - CS.steeringAngleDeg

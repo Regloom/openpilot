@@ -115,7 +115,7 @@ class Cluster():
   def measured(self):
     return any(t.measured for t in self.tracks)
 
-  def get_RadarState(self, model_prob=0.0):
+  def get_RadarState(self, model_prob=0.0, source='radar',checkSource='modelLead'):
     return {
       "dRel": float(self.dRel),
       "yRel": float(self.yRel),
@@ -127,7 +127,9 @@ class Cluster():
       "fcw": self.is_potential_fcw(model_prob),
       "modelProb": model_prob,
       "radar": True,
-      "aLeadTau": float(self.aLeadTau)
+      "aLeadTau": float(self.aLeadTau),
+      "source": source,
+      "checkSource": checkSource
     }
 
   def get_RadarState_from_vision(self, lead_msg, v_ego):
@@ -142,7 +144,9 @@ class Cluster():
       "fcw": False,
       "modelProb": float(lead_msg.prob),
       "radar": False,
-      "status": True
+      "status": True,
+      "source": 'model',
+      "checkSource": 'modelLead'
     }
 
   def __str__(self):
@@ -150,8 +154,8 @@ class Cluster():
     return ret
 
   def potential_low_speed_lead(self, v_ego):
-    # stop for stuff in front of you and low speed, even without model confirmation
-    return abs(self.yRel) < 1.5 and (v_ego < v_ego_stationary) and self.dRel < 25
+    # stop for stuff in front of you at low speed, even without model confirmation
+    return abs(self.yRel) < 1.5 and (v_ego < v_ego_stationary) and self.dRel < 25 and self.dRel > 0.
 
   def is_potential_fcw(self, model_prob):
     return model_prob > .9

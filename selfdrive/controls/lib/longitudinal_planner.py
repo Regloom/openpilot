@@ -3,6 +3,7 @@ import math
 import numpy as np
 from common.numpy_fast import interp
 
+from common.op_params import opParams
 from common.params import Params
 import cereal.messaging as messaging
 from cereal import log, car
@@ -24,11 +25,10 @@ from selfdrive.swaglog import cloudlog
 
 GearShifter = car.CarState.GearShifter
 
-BRAKE_SOURCES = {'lead0', 
-                 'lead1', 
+BRAKE_SOURCES = {'lead0',
+                 'lead1',
                  'lead2',
-                 'turn',
-                 'turnlimit'}
+                 'lead0p1'}
 COAST_SOURCES = {'cruise',
                  'limit'}
 
@@ -53,13 +53,14 @@ _A_CRUISE_MAX_BP = _A_CRUISE_MIN_BP
 
 _A_CRUISE_MIN_V_MODE_LIST = [_A_CRUISE_MIN_V, _A_CRUISE_MIN_V_SPORT, _A_CRUISE_MIN_V_ECO]
 _A_CRUISE_MAX_V_MODE_LIST = [_A_CRUISE_MAX_V, _A_CRUISE_MAX_V_SPORT, _A_CRUISE_MAX_V_ECO]
+_A_CRUISE_HIGHER_ACCEL_INDEX = [1, 1, 0]
 
 # Lookup table for turns - fast accel
 _A_TOTAL_MAX_V = [3.5, 4.0, 5.0]
 _A_TOTAL_MAX_BP = [0., 25., 55.]
 
 def calc_cruise_accel_limits(v_ego, following, accelMode):
-  if following and accelMode < 1:
+  if following and accelMode == 0:
     a_cruise_min = interp(v_ego, _A_CRUISE_MIN_BP, _A_CRUISE_MIN_V_FOLLOWING)
     a_cruise_max = interp(v_ego, _A_CRUISE_MAX_BP, _A_CRUISE_MAX_V_FOLLOWING)
   else:
@@ -67,7 +68,9 @@ def calc_cruise_accel_limits(v_ego, following, accelMode):
     a_cruise_max = interp(v_ego, _A_CRUISE_MAX_BP, _A_CRUISE_MAX_V_MODE_LIST[accelMode])
   return [a_cruise_min, a_cruise_max]
 
-
+LEAD_ONE_PLUS_TR_BUFFER = -0.3 # [s] follow distance between lead and lead+1 to run the lead+1 mpc (negative means the lead+1 doesn't affect planning unless they're rapidly approaching)
+LEAD_ONE_PLUS_STOPPING_DISTANCE_BUFFER = 1.0 # [m]
+LEAD_ONE_PLUS_TO_LEAD_ONE_CUTOFF_TTC = 1.5 # if lead TTC to lead+1 is less than this, then consider the lead+1
 
 def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   """
@@ -88,8 +91,11 @@ class Planner():
     self.mpcs = {}
     self.mpcs['lead0'] = LeadMpc(0)
     self.mpcs['lead1'] = LeadMpc(1)
+    self.mpcs['lead0p1'] = LeadMpc(2)
     self.mpcs['cruise'] = LongitudinalMpc()
     self.mpcs['custom'] = LimitsLongitudinalMpc()
+    
+    self.mpcs['lead0p1'].stopping_distance_offset = LEAD_ONE_PLUS_STOPPING_DISTANCE_BUFFER
 
     self.fcw = False
     self.fcw_checker = FCWChecker()
@@ -98,11 +104,13 @@ class Planner():
     self.a_desired = 0.0
     self.longitudinalPlanSource = 'cruise'
     self.alpha = np.exp(-CP.radarTimeStep/2.0)
-    self.lead_0 = log.ModelDataV2.LeadDataV3.new_message()
-    self.lead_1 = log.ModelDataV2.LeadDataV3.new_message()
+    self.lead_0 = log.RadarState.LeadData.new_message()
+    self.lead_1 = log.RadarState.LeadData.new_message()
+    self.lead_0_plus = log.RadarState.LeadData.new_message()
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
+    self.j_desired_trajectory = np.zeros(CONTROL_N)
 
     self.vision_turn_controller = VisionTurnController(CP)
     self.speed_limit_controller = SpeedLimitController()
@@ -110,38 +118,38 @@ class Planner():
     self.turn_speed_controller = TurnSpeedController()
 
     self._params = Params()
+    self._op_params = opParams(calling_function="longitudinal planner")
     self.params_check_last_t = 0.
     self.params_check_freq = 0.1 # check params at 10Hz
     
-    self.accel_mode = int(self._params.get("AccelMode", encoding="utf8"))  # 0 = normal, 1 = sport; 2 = eco; 3 = creep
+    self.MADS_enabled = Params().get_bool("MADSEnabled")
+    self.MADS_lead_braking_enabled = self.MADS_enabled and self._params.get_bool("MADSLeadBraking")
+    self.accel_mode = int(self._params.get("AccelMode", encoding="utf8"))  # 0 = normal, 1 = sport; 2 = eco
     self.coasting_lead_d = -1. # [m] lead distance. -1. if no lead
     self.coasting_lead_v = -10. # lead "absolute"" velocity
     self.tr = 1.8
-    self.lead_accel = 0.
-    
-    self.stopped_t_last = 0.
-    self.seconds_stopped = 0
-    self.standstill_last = False
+    self.seconds_stopped = 0.0
     self.gear_shifter_last = GearShifter.park
+    self.update_op_params()
 
 
+  def update_op_params(self):
+    self.accel_profile_factors = [
+      self._op_params.get('AP_stock_accel_factor'),
+      self._op_params.get('AP_sport_accel_factor'),
+      self._op_params.get('AP_eco_accel_factor')
+    ]
+    self.accel_profile_following_factor = self._op_params.get('AP_following_accel_factor')
+  
   def update(self, sm, CP):
     cur_time = sec_since_boot()
     t = cur_time
     
-    if sm.updated['carState'] and sm['carState'].onePedalModeActive or sm['carState'].coastOnePedalModeActive:
-      self.mpcs['lead0'].reset_mpc()
-      self.mpcs['lead1'].reset_mpc()
-    
     v_ego = sm['carState'].vEgo
     a_ego = sm['carState'].aEgo
     
-    if sm['carState'].standstill and not self.standstill_last:
-      self.stopped_t_last = t
-    self.standstill_last = sm['carState'].standstill
-    
-    if sm['carState'].standstill:
-      self.seconds_stopped = int(t - self.stopped_t_last)
+    if sm['carState'].standstill and sm['carState'].gearShifter in ['drive','low']:
+      self.seconds_stopped += DT_MDL
     else:
       self.seconds_stopped = 0
 
@@ -154,25 +162,29 @@ class Planner():
 
     self.lead_0 = sm['radarState'].leadOne
     self.lead_1 = sm['radarState'].leadTwo
+    self.lead_0_plus = sm['radarState'].leadOnePlus
+    
+    self.mpcs['lead0'].df.lateralPlan = sm['lateralPlan']
 
     enabled = (long_control_state == LongCtrlState.pid) or (long_control_state == LongCtrlState.stopping)
     following = self.lead_0.status and self.lead_0.dRel < 45.0 and self.lead_0.vLeadK > v_ego and self.lead_0.aLeadK > 0.0
     if self.lead_0.status:
       self.coasting_lead_d = self.lead_0.dRel
-      self.coasting_lead_v = self.lead_0.vLead
+      self.coasting_lead_v = self.lead_0.vLeadK
+      self.coasting_lead_a = self.lead_0.aLeadK
     elif self.lead_1.status:
       self.coasting_lead_d = self.lead_1.dRel
-      self.coasting_lead_v = self.lead_1.vLead
+      self.coasting_lead_v = self.lead_1.vLeadK
+      self.coasting_lead_a = self.lead_1.aLeadK
     else:
       self.coasting_lead_d = -1.
       self.coasting_lead_v = -10.
+      self.coasting_lead_a = 10.
     self.tr = self.mpcs['lead0'].tr
-    
     
     if sm['carState'].gearShifter == GearShifter.drive and self.gear_shifter_last != GearShifter.drive:
       self.mpcs['lead0'].df.reset()
     self.gear_shifter_last = sm['carState'].gearShifter
-    
     
     if long_control_state == LongCtrlState.off or sm['carState'].gasPressed:
       self.v_desired = v_ego
@@ -187,12 +199,20 @@ class Planner():
     
     if t - self.params_check_last_t >= self.params_check_freq:
       self.params_check_last_t = t
+      self.update_op_params()
+      self.MADS_lead_braking_enabled = self.MADS_enabled and self._params.get_bool("MADSLeadBraking")
       accel_mode = int(self._params.get("AccelMode", encoding="utf8"))  # 0 = normal, 1 = sport; 2 = eco
       if accel_mode != self.accel_mode:
           cloudlog.info(f"Acceleration mode changed, new value: {accel_mode} = {['normal','sport','eco','creep'][accel_mode]}")
           self.accel_mode = accel_mode
 
     accel_limits = calc_cruise_accel_limits(v_ego, following, self.accel_mode)
+    accel_limits[1] *= self.accel_profile_following_factor if following else self.accel_profile_factors[self.accel_mode]
+    if not sm['controlsState'].active:
+      accel_limits[1] = min(0.0, accel_limits[1])
+    if sm['carState'].gas > 1e-5:
+      accel_limits[0] = 0.0
+      
     accel_limits_turns = limit_accel_in_turns(v_ego, sm['carState'].steeringAngleDeg, accel_limits, self.CP)
     if force_slow_decel:
       # if required so, force a smooth deceleration
@@ -208,21 +228,45 @@ class Planner():
     accel_limits = [min(accel_limits_turns[0], a_mpc['custom']), accel_limits_turns[1]]
     self.mpcs['custom'].set_accel_limits(accel_limits[0], accel_limits[1])
 
-    next_a = np.inf
-    self.lead_accel = np.inf
-    for key in self.mpcs:
-      self.mpcs[key].set_cur_state(self.v_desired, self.a_desired)
-      self.mpcs[key].update(sm['carState'], sm['radarState'], v_cruise, a_mpc[key], active_mpc[key])
-      # picks slowest solution from accel in ~0.2 seconds
-      if self.mpcs[key].status and active_mpc[key] and self.mpcs[key].a_solution[5] < next_a:
-        self.longitudinalPlanSource = c_source if key == 'custom' else key
-        self.v_desired_trajectory = self.mpcs[key].v_solution[:CONTROL_N]
-        self.a_desired_trajectory = self.mpcs[key].a_solution[:CONTROL_N]
-        self.j_desired_trajectory = self.mpcs[key].j_solution[:CONTROL_N]
-        next_a = self.mpcs[key].a_solution[5]
-      if self.mpcs[key].status and active_mpc[key] and (key in BRAKE_SOURCES or (key == 'custom' and c_source in BRAKE_SOURCES)) \
-          and self.mpcs[key].a_solution[5] < self.lead_accel and self.mpcs[key].a_solution[5] < 0.:
-        self.lead_accel = self.mpcs[key].a_solution[5]
+    if not sm['controlsState'].active and not self.MADS_lead_braking_enabled:
+      self.v_desired_trajectory = np.ones(CONTROL_N) * v_ego
+      self.a_desired_trajectory = np.ones(CONTROL_N) * a_ego
+      self.j_desired_trajectory = np.zeros(CONTROL_N)
+      self.longitudinalPlanSource = 'cruise'
+      for key in self.mpcs:
+        self.mpcs[key].reset_mpc()
+    else:
+      next_a = np.inf
+      for key in self.mpcs:
+        if 'lead' in key:
+          self.mpcs[key].long_control_active = enabled
+          self.mpcs[key].MADS_lead_braking_enabled = self.MADS_lead_braking_enabled
+        if key == 'lead0p1':
+          ttc = LEAD_ONE_PLUS_TO_LEAD_ONE_CUTOFF_TTC + 1
+          if self.lead_0_plus.status and self.lead_0.status:
+            v_rel = self.lead_0_plus.vLeadK - self.lead_0.vLeadK
+            ttc = (self.lead_0_plus.dRel - self.lead_0.dRel) / max(v_rel, 0.01)
+          if ttc > LEAD_ONE_PLUS_TO_LEAD_ONE_CUTOFF_TTC:
+            self.mpcs['lead0p1'].reset_mpc()
+            continue
+          else:
+            tr = self.mpcs['lead0'].tr + LEAD_ONE_PLUS_TR_BUFFER
+            self.mpcs['lead0p1'].tr_override = True
+            self.mpcs['lead0p1'].tr = tr
+        if not sm['controlsState'].active and self.MADS_lead_braking_enabled \
+            and (key not in BRAKE_SOURCES or (key == 'custom' and c_source not in BRAKE_SOURCES)):
+          self.mpcs[key].reset_mpc()
+          continue
+
+        self.mpcs[key].set_cur_state(self.v_desired, self.a_desired)
+        self.mpcs[key].update(sm['carState'], sm['radarState'], v_cruise, a_mpc[key], active_mpc[key])
+        # picks slowest solution from accel in ~0.2 seconds
+        if self.mpcs[key].status and active_mpc[key] and self.mpcs[key].a_solution[5] < next_a:
+          self.longitudinalPlanSource = c_source if key == 'custom' else key
+          self.v_desired_trajectory = self.mpcs[key].v_solution[:CONTROL_N]
+          self.a_desired_trajectory = self.mpcs[key].a_solution[:CONTROL_N]
+          self.j_desired_trajectory = self.mpcs[key].j_solution[:CONTROL_N]
+          next_a = self.mpcs[key].a_solution[5]
         
     
 
@@ -259,7 +303,6 @@ class Planner():
 
     longitudinalPlan.hasLead = self.mpcs['lead0'].status
     longitudinalPlan.leadDist = self.coasting_lead_d
-    longitudinalPlan.leadAccelPlanned = float(self.lead_accel)
     longitudinalPlan.leadV = self.coasting_lead_v
     longitudinalPlan.desiredFollowDistance = self.mpcs['lead0'].tr
     longitudinalPlan.leadDistCost = self.mpcs['lead0'].dist_cost
@@ -268,7 +311,7 @@ class Planner():
     longitudinalPlan.longitudinalPlanSource = self.longitudinalPlanSource
     longitudinalPlan.fcw = self.fcw
     longitudinalPlan.dynamicFollowLevel = self.mpcs['lead0'].follow_level_df
-    longitudinalPlan.secondsStopped = self.seconds_stopped
+    longitudinalPlan.secondsStopped = int(self.seconds_stopped)
 
     longitudinalPlan.visionTurnControllerState = self.vision_turn_controller.state
     longitudinalPlan.visionCurrentLateralAcceleration = float(self.vision_turn_controller._current_lat_acc)
@@ -291,6 +334,7 @@ class Planner():
     longitudinalPlan.dynamicFollowState0.penalty = self.mpcs['lead0'].df.penalty
     longitudinalPlan.dynamicFollowState0.lastCutinFactor = self.mpcs['lead0'].df.last_cutin_factor
     longitudinalPlan.dynamicFollowState0.rescindedPenalty = self.mpcs['lead0'].df.rescinded_penalty
+    longitudinalPlan.dynamicFollowState0.penaltyTraffic = self.mpcs['lead0'].df.traffic_penalty
 
     longitudinalPlan.dynamicFollowState1.pointsCurrent = self.mpcs['lead1'].df.points_cur
     longitudinalPlan.dynamicFollowState1.newLead = self.mpcs['lead1'].df.new_lead
@@ -301,6 +345,7 @@ class Planner():
     longitudinalPlan.dynamicFollowState1.penalty = self.mpcs['lead1'].df.penalty
     longitudinalPlan.dynamicFollowState1.lastCutinFactor = self.mpcs['lead1'].df.last_cutin_factor
     longitudinalPlan.dynamicFollowState1.rescindedPenalty = self.mpcs['lead1'].df.rescinded_penalty
+    longitudinalPlan.dynamicFollowState1.penaltyTraffic = self.mpcs['lead1'].df.traffic_penalty
 
     longitudinalPlan.speedLimitControlState = self.speed_limit_controller.state
     longitudinalPlan.speedLimit = float(self.speed_limit_controller.speed_limit)
@@ -341,6 +386,7 @@ class Planner():
       'cruise': a_ego,  # Irrelevant
       'lead0': a_ego,   # Irrelevant
       'lead1': a_ego,   # Irrelevant
+      'lead0p1': a_ego,   # Irrelevant
       'custom': 0. if source is None else a_solutions[source],
     }
 
@@ -348,6 +394,7 @@ class Planner():
       'cruise': True,  # Irrelevant
       'lead0': True,   # Irrelevant
       'lead1': True,   # Irrelevant
+      'lead0p1': True,   # Irrelevant
       'custom': source is not None,
     }
 

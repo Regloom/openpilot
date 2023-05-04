@@ -1,6 +1,8 @@
 from cereal import car
+from common.filter_simple import FirstOrderFilter
+from common.op_params import opParams
 from common.numpy_fast import clip, interp
-from common.realtime import DT_MDL
+from common.realtime import DT_MDL, DT_CTRL
 from common.params import Params
 from selfdrive.config import Conversions as CV
 from selfdrive.modeld.constants import T_IDXS
@@ -11,12 +13,15 @@ V_CRUISE_MAX = 145
 V_CRUISE_MIN = 1
 V_CRUISE_DELTA = 5
 V_CRUISE_OFFSET = 3
-V_CRUISE_OFFSET_DEFAULT = 3
 V_CRUISE_ENABLE_MIN = 5
 LAT_MPC_N = 16
 LON_MPC_N = 32
 CONTROL_N = 17
 CAR_ROTATION_RADIUS = 0.0
+MIN_SPEED = 1.0
+
+# EU guidelines
+MAX_LATERAL_JERK = 5.0
 
 # this corresponds to 80deg/s and 20deg/s steering angle in a toyota corolla
 MAX_CURVATURE_RATES = [0.03762194918267951, 0.003441203371932992]
@@ -32,9 +37,9 @@ LIMIT_MAX_MAP_DATA_AGE = 10.  # s Maximum time to hold to map data, then conside
 
 
 class MPC_COST_LAT:
-  PATH = 1.0
-  HEADING = 1.0
-  STEER_RATE = 1.0
+  PATH = 1.1
+  HEADING = 1.1
+  STEER_RATE = 0.8
 
 
 class MPC_COST_LONG:
@@ -59,12 +64,43 @@ def rate_limit(new_value, last_value, dw_step, up_step):
 def get_steer_max(CP, v_ego):
   return interp(v_ego, CP.steerMaxBP, CP.steerMaxV)
 
-def set_v_cruise_offset(do_offset):
-  global V_CRUISE_OFFSET
-  if do_offset:
-    V_CRUISE_OFFSET = V_CRUISE_OFFSET_DEFAULT
+class ClusterSpeed:
+  def __init__(self, is_metric):
+    self._op_params = opParams(calling_function='drive_helpers.py ClusterSpeed')
+    self.v_ego = FirstOrderFilter(0.0, self._op_params.get('MISC_cluster_speed_smoothing_factor', force_update=True), DT_CTRL)
+    self.deadzone = self._op_params.get('MISC_cluster_speed_deadzone', force_update=True)
+    self.is_metric = is_metric
+    self.cluster_speed_last = 0
+    self.frame = 0
+  
+  def update(self, v_ego, do_reset=False):
+    if self.frame > 350:
+      self.frame = 0
+      self.v_ego.update_alpha(self._op_params.get('MISC_cluster_speed_smoothing_factor'))
+      self.deadzone = self._op_params.get('MISC_cluster_speed_deadzone')
+    self.frame += 1
+      
+    if do_reset:
+      self.v_ego.x = v_ego
+    else:
+      self.v_ego.update(v_ego)
+      
+    out = max(self.v_ego.x * (CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH), 0.0)
+    if do_reset or out < 0.5 - self.deadzone or abs(out - self.cluster_speed_last) > 1.0 + self.deadzone:
+      self.cluster_speed_last = int(round(out))
+    
+    return int(self.cluster_speed_last)
+      
+def get_cluster_speed(v_ego, cluster_speed_last, is_metric):
+  out = v_ego * (CV.MS_TO_KPH if is_metric else CV.MS_TO_MPH)
+  if abs(out - cluster_speed_last) > 1.25:
+    return int(round(out))
   else:
-    V_CRUISE_OFFSET = 0
+    return cluster_speed_last
+
+def set_v_cruise_offset(offset):
+  global V_CRUISE_OFFSET
+  V_CRUISE_OFFSET = offset
 
 def update_v_cruise(v_cruise_kph, buttonEvents, enabled, cur_time, accel_pressed,decel_pressed,accel_pressed_last,decel_pressed_last, fastMode, stock_speed_adjust, vEgo_kph, gas_pressed):
   
@@ -113,7 +149,6 @@ def update_v_cruise(v_cruise_kph, buttonEvents, enabled, cur_time, accel_pressed
 
   return v_cruise_kph
 
-
 def initialize_v_cruise(v_ego, buttonEvents, v_cruise_last):
   for b in buttonEvents:
     # 250kph or above probably means we never had a set speed
@@ -122,31 +157,32 @@ def initialize_v_cruise(v_ego, buttonEvents, v_cruise_last):
 
   return int(round(clip(v_ego * CV.MS_TO_KPH, V_CRUISE_ENABLE_MIN, V_CRUISE_MAX)))
 
+def get_lag_adjusted_curvature(CP, v_ego, psis, curvatures, curvature_rates, extra_delay=0.0):
+  if len(psis) != CONTROL_N:
+    psis = [0.0]*CONTROL_N
+    curvatures = [0.0]*CONTROL_N
+    curvature_rates = [0.0]*CONTROL_N
+  v_ego = max(MIN_SPEED, v_ego)
 
-def get_lag_adjusted_curvature(CP, v_ego, psis, curvatures, curvature_rates, t_since_plan):
   # TODO this needs more thought, use .2s extra for now to estimate other delays
-  delay = CP.steerActuatorDelay + .2
-  if len(psis) == CONTROL_N:
-    psi = interp(delay + t_since_plan, T_IDXS[:CONTROL_N], psis)
-    psi -= interp(t_since_plan, T_IDXS[:CONTROL_N], psis)
-    current_curvature = interp(t_since_plan, T_IDXS[:CONTROL_N], curvatures)
-    desired_curvature_rate = interp(t_since_plan, T_IDXS[:CONTROL_N], curvature_rates)
-  else:
-    psi = 0.0
-    current_curvature = 0.0
-    desired_curvature_rate = 0.0
+  delay = CP.steerActuatorDelay + .2 + extra_delay
 
   # MPC can plan to turn the wheel and turn back before t_delay. This means
   # in high delay cases some corrections never even get commanded. So just use
   # psi to calculate a simple linearization of desired curvature
-  curvature_diff_from_psi = psi / (max(v_ego, 1e-1) * delay) - current_curvature
-  desired_curvature = current_curvature + 2 * curvature_diff_from_psi
+  current_curvature_desired = curvatures[0]
+  psi = interp(delay, T_IDXS[:CONTROL_N], psis)
+  average_curvature_desired = psi / (v_ego * delay)
+  desired_curvature = 2 * average_curvature_desired - current_curvature_desired
 
-  max_curvature_rate = interp(v_ego, MAX_CURVATURE_RATE_SPEEDS, MAX_CURVATURE_RATES)
+  # This is the "desired rate of the setpoint" not an actual desired rate
+  desired_curvature_rate = curvature_rates[0]
+  max_curvature_rate = MAX_LATERAL_JERK / (v_ego**2) # inexact calculation, check https://github.com/commaai/openpilot/pull/24755
   safe_desired_curvature_rate = clip(desired_curvature_rate,
-                                    -max_curvature_rate,
-                                    max_curvature_rate)
+                                     -max_curvature_rate,
+                                     max_curvature_rate)
   safe_desired_curvature = clip(desired_curvature,
-                                current_curvature - max_curvature_rate * DT_MDL,
-                                current_curvature + max_curvature_rate * DT_MDL)
+                                current_curvature_desired - max_curvature_rate * DT_MDL,
+                                current_curvature_desired + max_curvature_rate * DT_MDL)
+
   return safe_desired_curvature, safe_desired_curvature_rate

@@ -1,9 +1,11 @@
 import numpy as np
 import time
 from collections import defaultdict
+from common.filter_simple import FirstOrderFilter
+from common.op_params import opParams
 from common.params import Params
 from cereal import log
-from common.realtime import sec_since_boot
+from common.realtime import sec_since_boot, DT_MDL
 from common.numpy_fast import interp
 from selfdrive.config import Conversions as CV
 from selfdrive.controls.lib.drive_helpers import LIMIT_ADAPT_ACC, LIMIT_MIN_SPEED, LIMIT_MAX_MAP_DATA_AGE, \
@@ -14,24 +16,9 @@ from selfdrive.modeld.constants import T_IDXS
 _ACTIVE_LIMIT_MIN_ACC = -0.5  # m/s^2 Maximum deceleration allowed while active.
 _ACTIVE_LIMIT_MAX_ACC = 0.5   # m/s^2 Maximum acelration allowed while active.
 
-_SPEED_LIMIT_SCALE_BY_SPEED_BP = [0.]
-_SPEED_LIMIT_SCALE_BY_SPEED_V = [1.08]
-def default_speed_scale():
-  return [_SPEED_LIMIT_SCALE_BY_SPEED_BP, _SPEED_LIMIT_SCALE_BY_SPEED_V]
-_SPEED_LIMIT_SCALE_FOR_ROAD_RANK = defaultdict(default_speed_scale)
-_SPEED_LIMIT_SCALE_FOR_ROAD_RANK[1] = [[0.],[1.25]] # motorway_link (freeway interchange)
-_SPEED_LIMIT_SCALE_FOR_ROAD_RANK[11] = _SPEED_LIMIT_SCALE_FOR_ROAD_RANK[1] # trunk_link (other interchange)
-
-def default_min_cutoff_speed_limit():
-  return 40.
-_MIN_CUTOFF_SPEED_LIMIT_FOR_ROAD_RANK = defaultdict(default_min_cutoff_speed_limit)
-_MIN_CUTOFF_SPEED_LIMIT_FOR_ROAD_RANK[0] = 35. * CV.MPH_TO_MS # don't brake for <= 35mph curves if on the freeway
-_MIN_CUTOFF_SPEED_LIMIT_FOR_ROAD_RANK[10] = 35. * CV.MPH_TO_MS # don't brake for <= 35mph curves if on the freeway (trunk)
-
 _DEBUG = False
 
 TurnSpeedControlState = log.LongitudinalPlan.SpeedLimitControlState
-
 
 def _debug(msg):
   if not _DEBUG:
@@ -53,6 +40,7 @@ def _description_for_state(turn_speed_control_state):
 class TurnSpeedController():
   def __init__(self):
     self._params = Params()
+    self._op_params = opParams(calling_function="turn speed controller")
     self._last_params_update = 0.
     self._is_enabled = self._params.get_bool("TurnSpeedControl")
     self._op_enabled = False
@@ -69,13 +57,29 @@ class TurnSpeedController():
 
     self._next_speed_limit_prev = 0.
 
-    self._a_target = 0.
-    
-    self._a_target_ema_k = 1/15
+    self._a_target = FirstOrderFilter(0., self._op_params.get('CB_MTSC_smoothing_factor', force_update=True), DT_MDL)
+
+  def get_speed_scale(self, road_rank):
+    if road_rank == 0:
+      return [[0.0], [self._op_params.get('CB_MTSC_speed_scale_freeway')]]
+    elif road_rank in [10, 20, 30]:
+      return [[0.0], [self._op_params.get('CB_MTSC_speed_scale_state_highway')]]
+    elif road_rank in [1,11,21,31]:
+      return [[0.0], [self._op_params.get('CB_MTSC_speed_scale_interchange')]]
+    else:
+      return [[0.0], [self._op_params.get('CB_MTSC_speed_scale_default')]]
+  
+  def get_speed_cutoff(self, road_rank):
+    if road_rank in [0,10]:
+      return self._op_params.get('CB_MTSC_cutoff_speed_freeway_mph') * CV.MPH_TO_MS
+    elif road_rank in [20,30]:
+      return self._op_params.get('CB_MTSC_cutoff_speed_state_highway_mph') * CV.MPH_TO_MS
+    else:
+      return 0.0
 
   @property
   def a_target(self):
-    return self._a_target if self.is_active else self._a_ego
+    return self._a_target.x if self.is_active else self._a_ego
 
   @property
   def state(self):
@@ -139,7 +143,7 @@ class TurnSpeedController():
     turn_sings_in_sections_ahead = map_data.turnSpeedLimitsAheadSigns
 
     v_ego = sm['carState'].vEgo
-    speed_limit_scale = _SPEED_LIMIT_SCALE_FOR_ROAD_RANK[int(map_data.currentRoadType)]
+    speed_limit_scale = self.get_speed_scale(int(map_data.currentRoadType))
     scale_factor = interp(v_ego, speed_limit_scale[0], speed_limit_scale[1])
           
     # Ensure current speed limit is considered only if we are inside the section.
@@ -147,7 +151,7 @@ class TurnSpeedController():
       speed_limit_end_time = (map_data.turnSpeedLimitEndDistance / self._v_ego) - gps_fix_age
       if speed_limit_end_time > 0.:
         # see if curve is below threshold for road type
-        if map_data.turnSpeedLimit > _MIN_CUTOFF_SPEED_LIMIT_FOR_ROAD_RANK[int(map_data.currentRoadType)]:
+        if map_data.turnSpeedLimit > self.get_speed_cutoff(int(map_data.currentRoadType)):
           speed_limit = map_data.turnSpeedLimit * scale_factor
         
 
@@ -192,6 +196,7 @@ class TurnSpeedController():
     if time > self._last_params_update + 0.5:
       self._is_enabled = self._params.get_bool("TurnSpeedControl")
       self._last_params_update = time
+      self._a_target.update_alpha(self._op_params.get('CB_MTSC_smoothing_factor'))
 
   def _update_calculations(self):
     # Update current velocity offset (error)
@@ -206,7 +211,7 @@ class TurnSpeedController():
 
     # In any case, we deactivate the speed limit controller temporarily
     # if gas is pressed (to support gas override implementations).
-    if sm['carState'].gasPressed:
+    if sm['carState'].gas > 1e-5:
       self.state = TurnSpeedControlState.tempInactive
       return
 
@@ -244,23 +249,22 @@ class TurnSpeedController():
     elif self.state == TurnSpeedControlState.adapting:
       # When adapting we target to achieve the speed limit on the distance.
       a_target = (self.speed_limit**2 - self._v_ego**2) / (2. * self.distance)
-      a_target = self._a_target_ema_k * a_target + (1. - self._a_target_ema_k) * self._a_target
       a_target = np.clip(a_target, LIMIT_MIN_ACC, LIMIT_MAX_ACC)
     # active
     elif self.state == TurnSpeedControlState.active:
       # When active we are trying to keep the speed constant around the control time horizon.
       # but under constrained acceleration limits since we are in a turn.
       a_target = self._v_offset / T_IDXS[CONTROL_N]
-      a_target = self._a_target_ema_k * a_target + (1. - self._a_target_ema_k) * self._a_target
-      a_target = np.clip(a_target, _ACTIVE_LIMIT_MIN_ACC, _ACTIVE_LIMIT_MAX_ACC)
+      a_target = np.clip(a_target, _ACTIVE_LIMIT_MIN_ACC * 0.6 if self._soften_decel else 1.0, _ACTIVE_LIMIT_MAX_ACC)
 
     # update solution values.
-    self._a_target = a_target
+    self._a_target.update(a_target)
 
   def update(self, enabled, v_ego, a_ego, sm):
     self._op_enabled = enabled
     self._v_ego = v_ego
     self._a_ego = a_ego
+    self._soften_decel = sm['carState'].lowVisibilityActive or sm['carState'].slipperyRoadsActive
 
     # Get the speed limit from Map Data
     self._speed_limit, self._distance, self._turn_sign = self._get_limit_from_map_data(sm)

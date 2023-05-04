@@ -2,21 +2,23 @@ import math
 import numpy as np
 from common.realtime import sec_since_boot, DT_MDL
 from common.numpy_fast import interp
-from common.params import Params
+from common.op_params import opParams
+from common.params import Params, put_nonblocking
 from selfdrive.swaglog import cloudlog
 from selfdrive.controls.lib.lateral_mpc import libmpc_py
 from selfdrive.controls.lib.drive_helpers import CONTROL_N, MPC_COST_LAT, LAT_MPC_N, CAR_ROTATION_RADIUS
-from selfdrive.controls.lib.lane_planner import LanePlanner, TRAJECTORY_SIZE
+from selfdrive.controls.lib.lane_planner import LanePlanner, TRAJECTORY_SIZE, AUTO_AUTO_LANE_MODE, LANE_TRAFFIC
 from selfdrive.config import Conversions as CV
 import cereal.messaging as messaging
 from cereal import log
 
 LaneChangeState = log.LateralPlan.LaneChangeState
 LaneChangeDirection = log.LateralPlan.LaneChangeDirection
+LaneChangeAlert = log.LateralPlan.LaneChangeAlert
 
 
-LANE_CHANGE_SPEED_MIN = 30 * CV.MPH_TO_MS
-LANE_CHANGE_TIME_MAX = 10.
+LANE_CHANGE_SPEED_MIN = 20.0 * CV.MPH_TO_MS
+LANE_CHANGE_TIME_MAX = 10.0
 LANE_CHANGE_MIN_ADJACENT_LANE_LINE_PROB = 0.2
 LANE_CHANGE_ADJACENT_LANE_MIN_WIDTH_FACTOR = 0.6
 
@@ -44,6 +46,7 @@ DESIRES = {
 
 class LateralPlanner():
   def __init__(self, CP, use_lanelines=True, wide_camera=False):
+    global LANE_CHANGE_SPEED_MIN
     self.use_lanelines = use_lanelines
     self.LP = LanePlanner(wide_camera, CP.mass)
 
@@ -53,17 +56,28 @@ class LateralPlanner():
     self.solution_invalid_cnt = 0
 
     self._params = Params()
+    self._op_params = opParams(calling_function="lateral planner")
     self.laneless_mode = int(self._params.get("LanelessMode", encoding="utf8"))
     self.laneless_mode_status = False
     self.laneless_mode_status_buffer = False
 
     self.nudgeless_enabled = self._params.get_bool("NudgelessLaneChange")
-    self.nudgeless_delay = 1.5 # [s] amount of time blinker has to be on before nudgless lane change
-    self.nudgeless_min_speed = 18. # no nudgeless below ≈40mph
+    self.nudgeless_delay = self._op_params.get('LC_nudgeless_delay_s', force_update=True) # [s] amount of time blinker has to be on before nudgless lane change
+    self.nudgeless_min_speed = self._op_params.get('LC_nudgeless_minimum_speed_mph', force_update=True) * CV.MPH_TO_MS
+    self.MADS_allow_nudgeless_lane_change = self._op_params.get('MADS_steer_allow_nudgeless_lane_change')
+    LANE_CHANGE_SPEED_MIN = self._op_params.get('LC_minimum_speed_mph', force_update=True) * CV.MPH_TO_MS
+    
     self.nudgeless_lane_change_start_t = 0.
     self.nudgeless_blinker_press_t = 0.
+    self.adjacentLaneWidth = 0.
+    self.adjacentLaneTraffic = LANE_TRAFFIC.NONE
+    self.lane_change_alert = LaneChangeAlert.none
+    self.lane_change_countdown = 0.
 
     self.auto_lane_pos_active = False
+    self.auto_auto_lane_pos_enabled = self._params.get_bool("AutoAutoLanePosition")
+    self.auto_lane_user_enabled = False
+    self.auto_lane_user_disabled = False
     
     self.lane_change_state = LaneChangeState.off
     self.prev_lane_change_state = self.lane_change_state
@@ -79,9 +93,14 @@ class LateralPlanner():
     self.plan_yaw = np.zeros((TRAJECTORY_SIZE,))
     self.t_idxs = np.arange(TRAJECTORY_SIZE)
     self.y_pts = np.zeros(TRAJECTORY_SIZE)
+    self.y_pts_full = np.zeros(TRAJECTORY_SIZE)
     self.d_path_w_lines_xyz = np.zeros((TRAJECTORY_SIZE, 3))
     self.second = 0.0
     self.lane_pos = 0. # 0., -1., 1. = center, left, right
+    
+    self.path_cost = 1.0
+    self.heading_cost = 1.0
+    self.steer_rate_cost = CP.steerRateCost
 
   def setup_mpc(self):
     self.libmpc = libmpc_py.libmpc
@@ -98,21 +117,61 @@ class LateralPlanner():
     self.safe_desired_curvature = 0.0
     self.desired_curvature_rate = 0.0
     self.safe_desired_curvature_rate = 0.0
+  
+  def update_op_params(self):
+    global LANE_CHANGE_SPEED_MIN
+    LANE_CHANGE_SPEED_MIN = self._op_params.get('LC_minimum_speed_mph') * CV.MPH_TO_MS
+    self.nudgeless_delay = self._op_params.get('LC_nudgeless_delay_s') # [s] amount of time blinker has to be on before nudgless lane change
+    self.nudgeless_min_speed = self._op_params.get('LC_nudgeless_minimum_speed_mph') * CV.MPH_TO_MS
+    self.MADS_allow_nudgeless_lane_change = self._op_params.get('MADS_steer_allow_nudgeless_lane_change')
+    if self._op_params.get('TUNE_LAT_do_override'):
+      self.path_cost = self._op_params.get('TUNE_LAT_mpc_path_cost')
+      self.heading_cost = self._op_params.get('TUNE_LAT_mpc_heading_cost')
+      self.steer_rate_cost = self._op_params.get('TUNE_LAT_mpc_steer_rate_cost')
 
   def update(self, sm, CP):
     self.second += DT_MDL
+    auto_lane_pos_active = self.auto_lane_pos_active
     if self.second > 1.0:
+      self.update_op_params()
       self.use_lanelines = not Params().get_bool("EndToEndToggle")
       self.laneless_mode = int(Params().get("LanelessMode", encoding="utf8"))
       self.lane_pos = float(Params().get("LanePosition", encoding="utf8"))
       self.nudgeless_enabled = self._params.get_bool("NudgelessLaneChange")
-      self.auto_lane_pos_active = self._params.get_bool("AutoLanePositionActive")
+      auto_lane_pos_active = self._params.get_bool("AutoLanePositionActive")
+      self.auto_auto_lane_pos_enabled = self._params.get_bool("AutoAutoLanePosition")
       self.second = 0.0
     v_ego = sm['carState'].vEgo
-    active = sm['controlsState'].active
+    active = sm['controlsState'].latActive
     measured_curvature = sm['controlsState'].curvature
 
+    if not auto_lane_pos_active and self.auto_lane_pos_active:
+      # user cancelled auto lane position
+      # if user_enabled is true, then this is them cancelling their own activation of auto lane position, so we'll allow auto auto mode to run again.
+      # if user_disabled is false, then they're cancelling auto auto mode and it wont' turn itself on again
+      if self.auto_lane_user_enabled:
+        self.auto_lane_user_disabled = False
+      else:
+        self.auto_lane_user_disabled = True
+    elif auto_lane_pos_active and not self.auto_lane_pos_active:
+      # user activated
+      self.auto_lane_user_enabled = True
+    
+    self.auto_lane_pos_active = auto_lane_pos_active
+    
+    if not self.auto_lane_pos_active:
+      self.auto_lane_user_enabled = False
+    
     md = sm['modelV2']
+    activate_auto_lane_pos = self.LP.lane_offset.do_auto_enable() if self.auto_auto_lane_pos_enabled else AUTO_AUTO_LANE_MODE.NO_CHANGE
+    if activate_auto_lane_pos == AUTO_AUTO_LANE_MODE.ENGAGE and not self.auto_lane_user_disabled:
+      put_nonblocking("AutoLanePositionActive", "1")
+      self.auto_lane_pos_active = True
+    elif activate_auto_lane_pos == AUTO_AUTO_LANE_MODE.DISENGAGE and not self.auto_lane_user_enabled:
+      put_nonblocking("AutoLanePositionActive", "0")
+      put_nonblocking("LanePosition", "0")
+      self.auto_lane_pos_active = False
+      self.lane_pos = 0.
     self.LP.parse_model(sm['modelV2'], self.lane_pos, sm, self.auto_lane_pos_active)
     if len(md.position.x) == TRAJECTORY_SIZE and len(md.orientation.x) == TRAJECTORY_SIZE:
       self.path_xyz = np.column_stack([md.position.x, md.position.y, md.position.z])
@@ -155,27 +214,50 @@ class LateralPlanner():
                           (sm['carState'].steeringTorque < 0 and self.lane_change_direction == LaneChangeDirection.right))
         
         # ignore nudgeless lane change if adjacent lane not present
-        adjacentLaneWidth = 0.
-        if self.nudgeless_enabled and \
-            len(md.laneLines) == 4 and len(md.laneLines[0].t) == TRAJECTORY_SIZE \
-            and len(md.roadEdges) >= 2 and len(md.roadEdges[0].t) == TRAJECTORY_SIZE:
+        self.adjacentLaneWidth = 0.
+        self.adjacentLaneTraffic = LANE_TRAFFIC.NONE
+        if len(md.laneLines) == 4 and len(md.laneLines[0].t) == TRAJECTORY_SIZE \
+          and len(md.roadEdges) >= 2 and len(md.roadEdges[0].t) == TRAJECTORY_SIZE:
           if self.lane_change_direction == LaneChangeDirection.left:
             if md.laneLineProbs[0] > LANE_CHANGE_MIN_ADJACENT_LANE_LINE_PROB \
                 and md.laneLineProbs[1] > LANE_CHANGE_MIN_ADJACENT_LANE_LINE_PROB:
-              adjacentLaneWidth = md.laneLines[1].y[0] - md.laneLines[0].y[0]
+              self.adjacentLaneWidth = md.laneLines[1].y[0] - md.laneLines[0].y[0]
           elif self.lane_change_direction == LaneChangeDirection.right:
             if md.laneLineProbs[3] > LANE_CHANGE_MIN_ADJACENT_LANE_LINE_PROB \
                 and md.laneLineProbs[2] > LANE_CHANGE_MIN_ADJACENT_LANE_LINE_PROB:
-              adjacentLaneWidth = md.laneLines[3].y[0] - md.laneLines[2].y[0]
+              self.adjacentLaneWidth = md.laneLines[3].y[0] - md.laneLines[2].y[0]
+        if self.lane_change_direction == LaneChangeDirection.left:
+          self.adjacentLaneTraffic = self.LP.lane_offset._left_traffic
+        elif self.lane_change_direction == LaneChangeDirection.right:
+          self.adjacentLaneTraffic = self.LP.lane_offset._right_traffic
+          
+        self.lane_change_alert = LaneChangeAlert.none
         
-        torque_applied = torque_applied or \
-          ( self.nudgeless_enabled \
-            and adjacentLaneWidth > self.LP.lane_width * LANE_CHANGE_ADJACENT_LANE_MIN_WIDTH_FACTOR \
-            and t - self.nudgeless_lane_change_start_t > self.nudgeless_delay \
-            and t - self.nudgeless_blinker_press_t < 3. \
-            and v_ego > self.nudgeless_min_speed \
-            and not sm['carState'].onePedalModeActive \
-            and not sm['carState'].coastOnePedalModeActive )
+        nudgeless_allowed = self.nudgeless_enabled
+        if nudgeless_allowed and v_ego < self.nudgeless_min_speed:
+          nudgeless_allowed = False
+          self.lane_change_alert = LaneChangeAlert.nudgelessBlockedMinSpeed
+        if nudgeless_allowed and t - self.nudgeless_blinker_press_t > 3.:
+          nudgeless_allowed = False
+          self.lane_change_alert = LaneChangeAlert.nudgelessBlockedTimeout
+        if nudgeless_allowed and (sm['controlsState'].latActive and not sm['controlsState'].active and not self.MADS_allow_nudgeless_lane_change):
+          nudgeless_allowed = False
+          self.lane_change_alert = LaneChangeAlert.nudgelessBlockedMADS
+        if nudgeless_allowed and not sm['controlsState'].active:
+          nudgeless_allowed = False
+          self.lane_change_alert = LaneChangeAlert.nudgelessLongDisabled
+        if nudgeless_allowed and self.adjacentLaneTraffic == LANE_TRAFFIC.ONCOMING:
+          nudgeless_allowed = False
+          self.lane_change_alert = LaneChangeAlert.nudgelessBlockedOncoming
+        if nudgeless_allowed and self.adjacentLaneWidth < self.LP.lane_width * LANE_CHANGE_ADJACENT_LANE_MIN_WIDTH_FACTOR:
+          nudgeless_allowed = False
+          self.lane_change_alert = LaneChangeAlert.nudgelessBlockedNoLane
+        if nudgeless_allowed and t - self.nudgeless_lane_change_start_t < self.nudgeless_delay:
+          nudgeless_allowed = False
+          self.lane_change_alert = LaneChangeAlert.nudgelessCountdown
+          self.lane_change_countdown = self.nudgeless_delay - (t - self.nudgeless_lane_change_start_t)
+        
+        torque_applied = torque_applied or nudgeless_allowed
 
         blindspot_detected = ((sm['carState'].leftBlindspot and self.lane_change_direction == LaneChangeDirection.left) or
                               (sm['carState'].rightBlindspot and self.lane_change_direction == LaneChangeDirection.right))
@@ -184,6 +266,10 @@ class LateralPlanner():
           self.lane_change_state = LaneChangeState.off
         elif torque_applied and not blindspot_detected:
           self.lane_change_state = LaneChangeState.laneChangeStarting
+          if self.adjacentLaneWidth < self.LP.lane_width * LANE_CHANGE_ADJACENT_LANE_MIN_WIDTH_FACTOR:
+            self.lane_change_alert = LaneChangeAlert.nudgeWarningNoLane
+          elif self.adjacentLaneTraffic == LANE_TRAFFIC.ONCOMING:
+            self.lane_change_alert = LaneChangeAlert.nudgeWarningOncoming
 
       # LaneChangeState.laneChangeStarting
       elif self.lane_change_state == LaneChangeState.laneChangeStarting:
@@ -232,18 +318,18 @@ class LateralPlanner():
     self.d_path_w_lines_xyz = self.LP.get_d_path(v_ego, self.t_idxs, self.path_xyz)
     if self.use_lanelines:
       d_path_xyz = self.d_path_w_lines_xyz
-      self.libmpc.set_weights(MPC_COST_LAT.PATH, MPC_COST_LAT.HEADING, CP.steerRateCost)
+      self.libmpc.set_weights(self.path_cost, self.heading_cost, self.steer_rate_cost)
       self.laneless_mode_status = False
     elif self.laneless_mode == 0:
       d_path_xyz = self.LP.get_d_path(v_ego, self.t_idxs, self.path_xyz)
-      self.libmpc.set_weights(MPC_COST_LAT.PATH, MPC_COST_LAT.HEADING, CP.steerRateCost)
+      self.libmpc.set_weights(self.path_cost, self.heading_cost, self.steer_rate_cost)
       self.laneless_mode_status = False
     elif self.laneless_mode == 1:
       d_path_xyz = self.path_xyz
-      path_cost = np.clip(abs(self.path_xyz[0,1]/self.path_xyz_stds[0,1]), 0.5, 3.0) * MPC_COST_LAT.PATH
+      path_cost = np.clip(abs(self.path_xyz[0,1]/self.path_xyz_stds[0,1]), 0.5, 3.0) * self.path_cost
       # Heading cost is useful at low speed, otherwise end of plan can be off-heading
-      heading_cost = interp(v_ego, [5.0, 10.0], [MPC_COST_LAT.HEADING, 0.0])
-      self.libmpc.set_weights(path_cost, heading_cost, CP.steerRateCost)
+      heading_cost = interp(v_ego, [5.0, 10.0], [self.heading_cost, 0.0])
+      self.libmpc.set_weights(path_cost, heading_cost, self.steer_rate_cost)
       self.laneless_mode_status = True
     elif self.laneless_mode == 2 \
         and ((self.LP.lll_prob + self.LP.rll_prob)/2 < 0.3 \
@@ -251,10 +337,10 @@ class LateralPlanner():
           or sm['longitudinalPlan'].visionCurrentLateralAcceleration > 0.8) \
         and self.lane_change_state == LaneChangeState.off:
       d_path_xyz = self.path_xyz
-      path_cost = np.clip(abs(self.path_xyz[0,1]/self.path_xyz_stds[0,1]), 0.5, 3.0) * MPC_COST_LAT.PATH
+      path_cost = np.clip(abs(self.path_xyz[0,1]/self.path_xyz_stds[0,1]), 0.5, 3.0) * self.path_cost
       # Heading cost is useful at low speed, otherwise end of plan can be off-heading
-      heading_cost = interp(v_ego, [5.0, 10.0], [MPC_COST_LAT.HEADING, 0.0])
-      self.libmpc.set_weights(path_cost, heading_cost, CP.steerRateCost)
+      heading_cost = interp(v_ego, [5.0, 10.0], [self.heading_cost, 0.0])
+      self.libmpc.set_weights(path_cost, heading_cost, self.steer_rate_cost)
       self.laneless_mode_status = True
       self.laneless_mode_status_buffer = True
     elif self.laneless_mode == 2 \
@@ -264,23 +350,24 @@ class LateralPlanner():
         and sm['longitudinalPlan'].visionMaxPredictedLateralAcceleration < 0.5 \
         and sm['longitudinalPlan'].visionCurrentLateralAcceleration < 0.4:
       d_path_xyz = self.LP.get_d_path(v_ego, self.t_idxs, self.path_xyz)
-      self.libmpc.set_weights(MPC_COST_LAT.PATH, MPC_COST_LAT.HEADING, CP.steerRateCost)
+      self.libmpc.set_weights(self.path_cost, self.heading_cost, self.steer_rate_cost)
       self.laneless_mode_status = False
       self.laneless_mode_status_buffer = False
     elif self.laneless_mode == 2 and self.laneless_mode_status_buffer == True and self.lane_change_state == LaneChangeState.off:
       d_path_xyz = self.path_xyz
-      path_cost = np.clip(abs(self.path_xyz[0,1]/self.path_xyz_stds[0,1]), 0.5, 3.0) * MPC_COST_LAT.PATH
+      path_cost = np.clip(abs(self.path_xyz[0,1]/self.path_xyz_stds[0,1]), 0.5, 3.0) * self.path_cost
       # Heading cost is useful at low speed, otherwise end of plan can be off-heading
-      heading_cost = interp(v_ego, [5.0, 10.0], [MPC_COST_LAT.HEADING, 0.0])
-      self.libmpc.set_weights(path_cost, heading_cost, CP.steerRateCost)
+      heading_cost = interp(v_ego, [5.0, 10.0], [self.heading_cost, 0.0])
+      self.libmpc.set_weights(path_cost, heading_cost, self.steer_rate_cost)
       self.laneless_mode_status = True
     else:
       d_path_xyz = self.LP.get_d_path(v_ego, self.t_idxs, self.path_xyz)
-      self.libmpc.set_weights(MPC_COST_LAT.PATH, MPC_COST_LAT.HEADING, CP.steerRateCost)
+      self.libmpc.set_weights(self.path_cost, self.heading_cost, self.steer_rate_cost)
       self.laneless_mode_status = False
       self.laneless_mode_status_buffer = False
 
     y_pts = np.interp(v_ego * self.t_idxs[:LAT_MPC_N + 1], np.linalg.norm(d_path_xyz, axis=1), d_path_xyz[:,1])
+    self.y_pts_full = np.interp(v_ego * self.t_idxs, np.linalg.norm(d_path_xyz, axis=1), d_path_xyz[:,1])
     heading_pts = np.interp(v_ego * self.t_idxs[:LAT_MPC_N + 1], np.linalg.norm(self.path_xyz, axis=1), self.plan_yaw)
     self.y_pts = y_pts
 
@@ -322,6 +409,7 @@ class LateralPlanner():
     plan_send.valid = sm.all_alive_and_valid(service_list=['carState', 'controlsState', 'modelV2'])
     plan_send.lateralPlan.laneWidth = float(self.LP.lane_width)
     plan_send.lateralPlan.dPathPoints = [float(x) for x in self.y_pts]
+    plan_send.lateralPlan.dPathPointsFull = [float(x) for x in self.y_pts_full]
     plan_send.lateralPlan.psis = [float(x) for x in self.mpc_solution.psi[0:CONTROL_N]]
     plan_send.lateralPlan.curvatures = [float(x) for x in self.mpc_solution.curvature[0:CONTROL_N]]
     plan_send.lateralPlan.curvatureRates = [float(x) for x in self.mpc_solution.curvature_rate[0:CONTROL_N-1]] +[0.0]
@@ -334,6 +422,8 @@ class LateralPlanner():
     plan_send.lateralPlan.desire = self.desire
     plan_send.lateralPlan.laneChangeState = self.lane_change_state
     plan_send.lateralPlan.laneChangeDirection = self.lane_change_direction
+    plan_send.lateralPlan.laneChangeAlert = self.lane_change_alert
+    plan_send.lateralPlan.laneChangeCountdown = float(self.lane_change_countdown)
 
     plan_send.lateralPlan.dPathWLinesX = [float(x) for x in self.d_path_w_lines_xyz[:, 0]]
     plan_send.lateralPlan.dPathWLinesY = [float(y) for y in self.d_path_w_lines_xyz[:, 1]]
@@ -341,9 +431,6 @@ class LateralPlanner():
     plan_send.lateralPlan.lanelessMode = bool(self.laneless_mode_status)
     
     plan_send.lateralPlan.autoLanePositionActive = bool(self.LP.lane_offset._auto_is_active)
-    plan_send.lateralPlan.lanePosition = log.LateralPlan.LanePosition.left if self.LP.lane_offset.lane_pos == 1. \
-                                    else log.LateralPlan.LanePosition.right if self.LP.lane_offset.lane_pos == -1. \
-                                    else log.LateralPlan.LanePosition.center
     plan_send.lateralPlan.laneOffset = float(self.LP.lane_offset.offset)
     plan_send.lateralPlan.laneWidthMeanLeftAdjacent = float(self.LP.lane_offset._lane_width_mean_left_adjacent)
     plan_send.lateralPlan.laneWidthMeanRightAdjacent = float(self.LP.lane_offset._lane_width_mean_right_adjacent)
@@ -351,15 +438,27 @@ class LateralPlanner():
     plan_send.lateralPlan.shoulderMeanWidthRight = float(self.LP.lane_offset._shoulder_width_mean_right)
     plan_send.lateralPlan.laneProbs = [float(i) for i in self.LP.lane_offset._lane_probs]
     plan_send.lateralPlan.roadEdgeProbs = [float(i) for i in self.LP.lane_offset._road_edge_probs]
+    plan_send.lateralPlan.trafficLeft = LANE_TRAFFIC.to_cereal(self.LP.lane_offset._left_traffic)
+    plan_send.lateralPlan.trafficRight = LANE_TRAFFIC.to_cereal(self.LP.lane_offset._right_traffic)
+    plan_send.lateralPlan.trafficCountLeft = self.LP.lane_offset._left_traffic_count
+    plan_send.lateralPlan.trafficCountRight = self.LP.lane_offset._right_traffic_count
+    plan_send.lateralPlan.trafficMinSeperationLeft = float(self.LP.lane_offset._left_traffic_min_sep_dist.x)
+    plan_send.lateralPlan.trafficMinSeperationRight = float(self.LP.lane_offset._right_traffic_min_sep_dist.x)
+    plan_send.lateralPlan.laneDistFromCenter = float(self.LP.lane_dist_from_center.x)
     if self.auto_lane_pos_active:
       if self.LP.lane_offset._lane_pos_auto == -1. and self.lane_pos != -1.:
         self.lane_pos = -1.
-        Params().put("LanePosition", "-1")
+        put_nonblocking("LanePosition", "-1")
       elif self.LP.lane_offset._lane_pos_auto == 1. and self.lane_pos != 1.:
         self.lane_pos = 1.
-        Params().put("LanePosition", "1")
+        put_nonblocking("LanePosition", "1")
       elif self.LP.lane_offset._lane_pos_auto == 0. and self.lane_pos != 0.:
         self.lane_pos = 0.
-        Params().put("LanePosition", "0")
+        put_nonblocking("LanePosition", "0")
+        
+    plan_send.lateralPlan.lanePosition = log.LateralPlan.LanePosition.left if self.LP.lane_offset.lane_pos == 1. \
+                                    else log.LateralPlan.LanePosition.right if self.LP.lane_offset.lane_pos == -1. \
+                                    else log.LateralPlan.LanePosition.center
+    
 
     pm.send('lateralPlan', plan_send)

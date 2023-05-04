@@ -44,10 +44,12 @@ class PIDController:
     self.i_unwind_rate = 0.3 / rate
     self.i_rate = 1.0 / rate
     self.sat_limit = sat_limit
+    self.error_rate = 0.0
+    self._gain_update_factor = 0.0
 
     if any([k > 0.0 for k in self._k_d[1]]):
       self._d_period = round(derivative_period * rate)  # period of time for derivative calculation (seconds converted to frames)
-      self._d_period_recip = 1. / self._d_period
+      self._d_period_recip = 1. * self._d_period
       self.outputs = deque(maxlen=self._d_period)
     else:
       self.outputs = None
@@ -112,10 +114,10 @@ class PIDController:
     if self.output_norms is not None:
       self.output_norms = deque(maxlen=self._k_period)
 
-  def update(self, setpoint, measurement, speed=0.0, check_saturation=True, override=False, feedforward=0., deadzone=0., freeze_integrator=False):
+  def update(self, setpoint, measurement, speed=0.0, check_saturation=True, override=False, feedforward=0., deadzone=0., freeze_integrator=False, D = None, error=None):
     self.speed = speed
 
-    error = float(apply_deadzone(setpoint - measurement, deadzone))
+    error = float(apply_deadzone((setpoint - measurement) if error is None else error, deadzone))
 
     self.kp = self.k_p
     self.ki = self.k_i
@@ -126,12 +128,13 @@ class PIDController:
       self.output_norms.append(self.outputs[-1] / (abs_sp + 1.)) # use the last iteration's output
       if len(self.output_norms) == int(self._k_period):
         delta_error_norm = self.output_norms[-1] - self.output_norms[0]
-        gain_update_factor = self.output_norms[-1] * delta_error_norm
+        gain_update_factor = clip(self.output_norms[-1] * delta_error_norm, -1.0, 1.0)
+        self._gain_update_factor = gain_update_factor
         if gain_update_factor != 0.:
           abs_guf = abs(gain_update_factor)
-          self.kp *= 1. + min(2., self.k_11 * abs_guf)
-          self.ki *= 1. + clip(self.k_12 * gain_update_factor, -1., 2.)
-          self.kd *= 1. + min(2., self.k_13 * abs_guf)
+          self.kp = self.kp * (1. + self.k_11 * abs_guf)
+          self.ki = self.ki * (0.3 + self.k_12 * gain_update_factor)
+          self.kd = self.kd * (1. + self.k_13 * abs_guf)
 
       
     
@@ -139,7 +142,11 @@ class PIDController:
     self.f = feedforward * self.k_f
     
     if self.outputs is not None and len(self.outputs) == int(self._d_period):  # makes sure we have enough history for period
-      self.d = clip((self.outputs[-1] - self.outputs[0]) * self._d_period_recip * self.kd, -abs(self.p), abs(self.p))
+      self.error_rate = (self.outputs[-1] - self.outputs[0]) * self._d_period_recip
+      if D is None:
+        self.d = clip(self.error_rate * self.kd, -abs(self.p), abs(self.p))
+      else:
+        self.d = D * self.kd
     else:
       self.d = 0.
 

@@ -44,7 +44,8 @@ OnroadWindow::OnroadWindow(QWidget *parent) : QWidget(parent) {
 
 void OnroadWindow::updateState(const UIState &s) {
   SubMaster &sm = *(s.sm);
-  QColor bgColor = bg_colors[s.status];
+  auto const & bg_colors_ = (s.scene.alt_engage_color_enabled ? alt_bg_colors : bg_colors);
+  QColor bgColor = bg_colors_[s.status];
   if (sm.updated("controlsState")) {
     const cereal::ControlsState::Reader &cs = sm["controlsState"].getControlsState();
     alerts->updateAlert({QString::fromStdString(cs.getAlertText1()),
@@ -58,7 +59,7 @@ void OnroadWindow::updateState(const UIState &s) {
       alerts->updateAlert(CONTROLS_WAITING_ALERT, bgColor);
     } else if ((nanos_since_boot() - sm.rcv_time("controlsState")) / 1e9 > CONTROLS_TIMEOUT) {
       // car is started, but controls is lagging or died
-      bgColor = bg_colors[STATUS_ALERT];
+      bgColor = bg_colors_[STATUS_ALERT];
       alerts->updateAlert(CONTROLS_UNRESPONSIVE_ALERT, bgColor);
     }
   }
@@ -83,20 +84,28 @@ void OnroadWindow::mousePressEvent(QMouseEvent* e) {
   if (map != nullptr) {
     bool sidebarVisible = geometry().x() > 0;
     bool ignorePress = false;
-    
+    if (!QUIState::ui_state.scene.screen_tapped2){
+      QUIState::ui_state.scene.screen_tapped2 = true;
+      ignorePress = true;
+    }
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.speed_limit_sign_touch_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.laneless_btn_touch_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.speed_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.wheel_touch_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.brake_touch_rect, e);
+    ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.power_meter_rect, e);
+    ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.power_meter_text_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.screen_dim_touch_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.accel_mode_touch_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.dynamic_follow_mode_touch_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.lane_pos_left_touch_rect, e);
     ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.lane_pos_right_touch_rect, e);
-    for (int i = 0; i < QUIState::ui_state.scene.measure_cur_num_slots && !ignorePress; ++i){
-      ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.measure_slot_touch_rects[i], e);
-    }
+    ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.one_pedal_touch_rect, e);
+    ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.weather_touch_rect, e);
+    ignorePress = ignorePress || ptInBiggerRect(QUIState::ui_state.scene.adjacent_lead_info_touch_rect, e);
+    ignorePress = ignorePress || (QUIState::ui_state.scene.lastTime - QUIState::ui_state.scene.measures_last_tap_t < QUIState::ui_state.scene.measures_touch_timeout 
+                                  && QUIState::ui_state.scene.started
+                                  && ptInBiggerRect(QUIState::ui_state.scene.measure_slots_rect, e));
     if (!ignorePress){
       map->setVisible(!sidebarVisible && !map->isVisible());
     }
