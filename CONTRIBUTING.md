@@ -38,7 +38,7 @@ git submodule update --init
 ```
 The reasons for having submodules on a dedicated repository and our new development philosophy can be found in our [post about externalization](https://blog.comma.ai/a-2020-theme-externalization/).
 Modules that are in seperate repositories include:
-* cereal
+* cereal (copied)
 * laika
 * opendbc
 * panda
