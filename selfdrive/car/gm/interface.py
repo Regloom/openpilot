@@ -283,10 +283,18 @@ class CarInterface(CarInterfaceBase):
   def initialize_feedforward_function_torque_nn(self):
     if self.CP.carFingerprint in [CAR.VOLT, CAR.VOLT18]:
       self.ff_nn_model = FluxModel("/data/openpilot/selfdrive/car/gm/models/CHEVROLET VOLT PREMIER 2017.json")
+    elif self.CP.carFingerprint == CAR.BUICK_LACROSSE:
+      self.ff_nn_model = FluxModel("/data/openpilot/selfdrive/car/gm/models/BUICK LACROSSE 2017.json")
+    elif self.CP.carFingerprint == CAR.ACADIA:
+      self.ff_nn_model = FluxModel("/data/openpilot/selfdrive/car/gm/models/GMC ACADIA DENALI 2018.json")
   
   def initialize_feedforward_function_nn(self):
     if self.CP.carFingerprint in [CAR.VOLT, CAR.VOLT18]:
       self.ff_nn_model = FluxModel("/data/openpilot/selfdrive/car/gm/models/CHEVROLET VOLT PREMIER 2017 steer angle.json")
+    elif self.CP.carFingerprint == CAR.BUICK_LACROSSE:
+      self.ff_nn_model = FluxModel("/data/openpilot/selfdrive/car/gm/models/BUICK LACROSSE 2017 steer angle.json")
+    elif self.CP.carFingerprint == CAR.ACADIA:
+      self.ff_nn_model = FluxModel("/data/openpilot/selfdrive/car/gm/models/GMC ACADIA DENALI 2018 steer angle.json")
   
   def get_steer_feedforward_function_torque_lat_jerk(self):
     if self.CP.carFingerprint in [CAR.VOLT, CAR.VOLT18]:
@@ -322,7 +330,7 @@ class CarInterface(CarInterfaceBase):
     tire_stiffness_factor = 0.444  # not optimized yet
     
     ret.longitudinalActuatorDelayLowerBound = 0.42
-    ret.longitudinalActuatorDelayUpperBound = 0.42
+    ret.longitudinalActuatorDelayUpperBound = 0.5
 
     # Default lateral controller params.
     ret.minSteerSpeed = 6.7 * CV.MPH_TO_MS
