@@ -1,16 +1,13 @@
 ### Which fork do you want?
 * C2 users: you might be stuck on the `tw-c2` branch if this branch (`tw-main`) doesn't work.
-* C3 users: depending on how new your C3 is, support might have been lost with my "tw" branches, so you'll want to use my SunnyPilot fork `sunnu-dev` (will update as this changes).
+* C3 users: depending on how new your C3 is, support might have been lost with my "tw" branches, so you'll want to use SunnyPilot or FrogPilot, both of which have the NNFF lateral controls code as an optional feature.
+* C3X users: **Do not install my fork, it will brick your device!**
 * `tw-main` is a stable branch based on a 1-ish year old build
 * `tw-staging` receives more updates and newer features
 * `tw-dev` is modified often and is for breaking; use at your own risk
 * I'll list relevent branches here as they're made.
-* What's the difference?
-    * "My fork" is based on OpenPilot v0.8.9 from Winter 2021
-        * Uses the last of the "medium models" for planning the driving path, which is rock solid dependable, unlike the newer models that cut curners bad
-    * `sunny-dev` is based on SunnyPilot, a popular fork with some great features, and it stays up to date with upstream OpenPilot software.
-        * It provides support for newer C3s
-        * *Please (at least partially) direct your support for the SunnyPilot fork to SunnyPilot directly.*
+* What's the difference from stock OpenPilot?
+    * "My fork" is based on OpenPilot v0.8.9 from Winter 2021, and uses the last of the "medium models" for planning the driving path, which is rock solid dependable, unlike the newer models that cut curners bad
 
 ### Join us on Discord!
 * Find us in the "[twilsonco Volt GM fork](https://discord.com/channels/469524606043160576/884811574773157949)" thread in the [GM channel](https://discord.com/channels/469524606043160576/524611823090008065) of the [Comma.ai Discord server](https://discord.comma.ai).
@@ -41,11 +38,11 @@
 
 ### Infographics
 ------
-![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_touchcontrols.png?raw=true)
-![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_coasting.png?raw=true)
-![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_lane_position.png?raw=true)
-![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_metrics.png?raw=true)
-![](https://github.com/twilsonco/openpilot/blob/tw-0.8.9-dev/fork_image_misc.png?raw=true)
+![](https://github.com/twilsonco/openpilot/blob/tw-dev/fork_image_touchcontrols.png?raw=true)
+![](https://github.com/twilsonco/openpilot/blob/tw-dev/fork_image_coasting.png?raw=true)
+![](https://github.com/twilsonco/openpilot/blob/tw-dev/fork_image_lane_position.png?raw=true)
+![](https://github.com/twilsonco/openpilot/blob/tw-dev/fork_image_metrics.png?raw=true)
+![](https://github.com/twilsonco/openpilot/blob/tw-dev/fork_image_misc.png?raw=true)
 
 ### Videos
 ------
@@ -255,6 +252,37 @@ If you're device stays connected to your car all the time, you'll be presented w
   * Geo widget: GPS signal/coords/#satellites, altitude, percent grade of current road, ...
   * Device widget: CPU/memory/temps/fans/...
   * EV widget: high voltage battery info similar to that shown in the LeafSpyPro app
+
+### Supported Hardware
+------
+
+This fork is developed and used on a Comma Three in a 2018 Chevy Volt, and is also *known* to work on Comma Two and Comma Zero, and in 2017 Volt, 2018 Acadia, and supported Escalades.
+
+### Installation Instructions
+------
+
+#### Easy: using comma's [openpilot-installer-generator](https://github.com/sshane/openpilot-installer-generator)
+
+`installer.comma.ai/twilsonco`
+
+
+To ride the bleeding edge, try the staging branch where new features are tested before they go to regular users:
+(Be extra diligent and attentive when using the staging branch; it is considered experimental moreso than the regular branch!)
+`installer.comma.ai/twilsonco/tw-staging`
+
+#### Less easy
+
+With a stock installation of OpenPilot confirmed working, SSH into device and run the following:
+
+`cd /data;mv openpilot openpilot_stock;git clone --recurse-submodules https://github.com/twilsonco/openpilot`
+
+Then, `sudo reboot`
+
+### Automatic Updates
+------
+
+This fork will auto-update while your device has internet access, and changes are automatically applied the next time the device restarts.
+If you're device stays connected to your car all the time, you'll be presented with a message to update when your car is off.
 
 ### Tuning
 ------

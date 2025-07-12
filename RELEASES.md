@@ -1,85 +1,22 @@
-Version tw-0.8.12-17 (2023-4-30--6-06)
+Version tw-0.8.13 (2023-11-15)
 ========================
-  * IMPROVED: NNFF improvements
-  * NEW Add Acadia and LaCrosse NNFF for torque and lat-pid controllers
-  * IMPROVED: UI path gets a face lift
-  * NEW: Print time to pass (seconds) for closest adjacent ongoing lead (if show all car speeds is enabled in toggles)
-  * IMPROVED: Vision turn controller fixes and improvements
+ * ATTENTION!!! OpenStreetMap-based features must not be used unless you have an external hotspot or your own sim card for data.
+   * After this update, you need to DISABLE TURN SPEED CONTROLLER AND SPEED LIMIT CONTROL AND THEN RESTART YOUR DEVICE!!!
+   * Comma's data plan for Comma Prime is no longer unlimited, therefore all non-Comma-service-related data use is strictly prohibited
+   * YOUR COMMA PRIME SUBSCRIPTION WILL BE TERMINATED IF YOU VIOLATE THIS RULE
+   * If you enable the turn speed controller or automatic speed limits, then OSM data will be fetched, so keep both of those features disabled unless you have your own source for cellular data
 
-Version tw-0.8.12-16 (2023-4-7,9)
+Version tw-0.8.12 (2023-05-24)
 ========================
-  * Improved "torque" lateral control
-    * Validate imported NN FF models against precomputed test values
-    * Volt neural network feedforward (optional with toggle) (updated 4/9)
-    * Volt 3-part composite fit feedforward with lateral accel, lateral jerk, and lateral gravitaional accel components
-    * Revamped AZNPIDF lateral controller for more robust corrections and better centering on straights
-    * Error downscalling in curves to allow feedforward to do most of the work, resulting in smoother steering wheel motion.
-    * *Additional error downscaling after driver applied steer torque to avoid overcorrecting when autosteer comes back online*
-  * Weather: full view shows imminent sunrise/sunset
-  * OPParams: add toggle to reset all opparams to defaults on next start
-  * Volt: disable autohold + one pedal mode when park assist is active.
+  * TOO MANY CHANGES!! HAVE FUN SCROLLING AND READING.
+  * MAYBE CHECKOUT THE UPDATED README INSTEAD?
 
-Version tw-0.8.12-15 (2023-🥧+1)
-========================
-  * **support for newer C3s** (panda fan stall detection and internal fan controller added)
-  * **support for Buick Lacrosse**
-  * **support for no-acc volts** (see ed5e081; thanks Eric Brown!)
-  * add toggle to disable openpilot updates
-  * improved: controls:
-    * Volt:
-      * updated custom torque controller lateral acceleration feedforward function
-      * replace "friction" with **custom lateral jerk feedforward** function
-        * ~~"friction" in gm/interface.py or opparams is now a linear coefficient to cap the lateral jerk FF value when desired lateral jerk ≈ 0. For cars without custom lateral jerk FF (everything but Volt), friction specifies the max amount of "friction" torque sent.~~ This is still possible by setting the value of friction for Volt to be ≥ 0.0, but it should be left at -1.0 to disable this linear cap.
-        * Now future planned lateral jerk is used as a check on the amount of lateral jerk feedforward. This change removes the need for the linear cap.
-      * lower steer actuator delay 
-      * revert use of future curvature in torque controller "low speed factor" as it was neutering the ability to correct steer angle on straights at very low speeds
-    * Acadia:
-      * Updated torque controller feedforward
-    * revert PID derivative gain calculation to use error rate (instead of output)
-    * replace PID "integrator" (ema really) with explicit trapezoidal integrator with controllable period
-      * lat/long controllers use 1.5s integral period
-      * other controllers (i.e. fanspeed) use a 2s period, selected because it reproduced the values of the old integrator
-    * any amount of gas "overrides" the long controller, preventing integral windup 
-    * positive acceleration smoothing:
-      * starts at the current accel, for all the smoothing and none of the lag
-      * only smooths at low speeds, for no delay at higher speeds
-    * removed post-resume negative acceleration smoothing; no longer required
-    * PID "autotuned" parameters now normalized based on speed, for more error response at low speed
-  * improved: include lead lateral velocity in lead velocity calculation, only at low speed, to prevent op from slowing down as much for leads turning right
-  * improved: automatic lane position:
-    * revert to center position when opposite blinker is on (e.g. if in left position and right blinker is on, go back to center, but not if left blinker is on)
-  * improved: opparams
-    * see history for each param when accessed (full history in /data/community)
-    * add default param resetting mechanism so that improved defaults can be pushed to users
-    * indicate which parameters are changed from default
-    * show onscreen alert when live opparam is changed
-    * lots of cleanup and fingerpainting
-    * many new parameters
-  * UI improvements
-    * Hide current speed (toggle; can still tap where speed would be to cycle UI metric layouts)
-    * UI metrics:
-      * remove extra lines from power meter (they indicated drag/rolling/gravity power losses but it was incoherent to look at)
-      * second column hides when map is open
-      * some formatting improvements
-      * fix placement of metrics when in 2x4 layout
-      * new metrics:
-        * kinetic energy
-        * time/distance to stop from current speed
-        * "minimum" time/distance to stop based on 7m/s^2 deceleration rate (I looked it up somewhere)
-    * curve braking icon hides for alerts
-    * add parked timer that shows after 80 seconds (configure in opparams)
-  * ...many other small things (check the commit history)
-
-Version tw-0.8.12-14_tws (2023-01-17)
-========================
   * one-pedal mode regen paddle integration
   * alert shown when each MADS feature is toggled
   * stopped timer only increments when in gear
   * use deadzone for current speed to better match vehicle cluster speed
     * opParams MISC_cluster_speed params to disable/adjust
 
-Version tw-0.8.12-13_tws (2023-01-02)
-========================
   * opParams: command-line editor to configure OpenPilot over SSH that lets you tune and change options instantaneously while driving. You can tune run `./opparams.py` immediately after connecting over SSH (https://docs.comma.ai/tools/ssh/README.html#) and configure the following:
     * acceleration profiles
     * traffic following profiles
@@ -104,8 +41,6 @@ Version tw-0.8.12-13_tws (2023-01-02)
   * Fixes to post-MADS autohold (regen tap still doesn't release like it used to, but gas tap does. Still working on this)
   * Grey Panda support (Thanks @Regloom)
 
-Version tw-0.8.12-12_tws (2022-12-26)
-========================
  * MADS (Modified Assistive Driving Safety). Three independent, always-on safety features. Enable the MADS autosteer toggle in order to access the other features as well. If enabled, the max speed indicator is replaced by the MADS icon. *Reminder: You can use the cruise main button to cancel out all openpilot controls*. 
   * *Autosteer* comes on as soon as you start driving the car, before initially engaging, and even while brakes are pressed. *Toggle autosteer with the lane keep assist button on your steering wheel*. Optional toggle in settings to pause steering at low speeds when blinker is on and you're decelerating. When autosteer is enabled, the steering wheel icon will be colored ("disengaged" color when disabled).
   * *Lead braking* will be applied automatically, so OpenPilot will smoothly slow for other cars *if neither the gas or brake pedal are pressed in the slightest*. Use either pedal to override lead braking. *Toggle lead braking with the ACC follow distance button on your steering wheel*. When lead braking is enabled, an additional white ring is shown around the MADS icon.
@@ -127,8 +62,6 @@ Version tw-0.8.12-12_tws (2022-12-26)
   * Distance per disengagement (drive or trip; also for interactions, interventions, distractions)
 * Spruced up the toggles page
 
-Version tw-0.8.12-11_tws (2022-12-09)
-========================
   * Huge One Pedal Mode improvements
     * Blending of One Pedal and lead braking works much better, including when in regen-only mode and coast-mode. If you haven't tried it, you have to try it now
       * Make sure "one pedal pro brakes" is *disabled* in order to allow lead braking
@@ -143,8 +76,6 @@ Version tw-0.8.12-11_tws (2022-12-09)
   * Improved Volt torque lateral
   * Less curve braking
 
-Version tw-0.8.12-10_tws (2022-11-22)
-========================
   * Dynamic follow mode:
     * should work now!
     * now uses cut-ins **and adjacent traffic** to change (continuously) between close/medium/far follow 
@@ -163,8 +94,6 @@ Version tw-0.8.12-10_tws (2022-11-22)
   * Print bearing above current speed (next to street name)
   * [Volt] Improved "torque" lateral control
 
-Version tw-0.8.12-8_twd (2022-09-29)
-========================
  * NEW: [toggle] Extended radar capabilities
    * (VERY ALPHA) brake for lead+1 car (the car in front of the lead)
      * if the lead+1 brakes and the lead doesn't see it and slams into them, openpilot will avoid the crash
@@ -212,8 +141,6 @@ Version tw-0.8.12-8_twd (2022-09-29)
    * Prevented from showing duplicate metrics
    * 9 new metrics: electric motor force/power (kw or hp), regen force/power (kw or hp), brake force/power (kw or hp)
 
-Version tw-0.8.12-8_twd (2022-09-29)
-========================
  * NEW: new power meter to replace brake indicator
   * Enable brake indicator in settings
   * Tap indicator or meter to toggle between the two or show text
@@ -227,9 +154,6 @@ Version tw-0.8.12-8_twd (2022-09-29)
  * IMPROVED: drag, accel, and drive power metrics now come in W and hp units
  * IMPROVED: instantaneous EV consumption metric will switch to MW when applicable (how fun)
 
-
-Version tw-0.8.12-7_twd (2022-09-15)
-========================
  * NEW: 7 UI metrics: Drag (resistance) force, drag power, acceleration force (F=ma), acceleration power, drive power (drag + accel + losses), ICE power (for volt when ice is on; untested!), EV drivetrain (plus other stuff) efficiency (power from battery vs drive power)
  * IMPROVED: dynamic steer rate limit now scales with future curvature, so no more excessive correction to potholes at low speeds on straights
  * NEW: Auto automatic lane position when on highways/freeways and 38mph+ [optional]
@@ -243,9 +167,6 @@ Version tw-0.8.12-7_twd (2022-09-15)
  * one pedal mode: improved braking profiles and smoother transitions
  * "communications error" alert now lists the process(es) that failed
 
-
-Version tw-0.8.12-6_twd (2022-09-09)
-========================
  * NEW: Bolt EUV support
  * NEW: [GM w/ ASCM] Include LKA camera vision data with radar for lead tracking
   * Now both vision and radar have to fail in order for a radar fault to be thrown!
@@ -258,9 +179,6 @@ Version tw-0.8.12-6_twd (2022-09-09)
  * IMPROVED: Completely redone one-pedal mode logic. Smoother and more consistent braking.
   * No more mixed openpilot + one-pedal braking: you're in charge of braking!
 
-
-Version tw-0.8.12-5_twd (2022-08-04)
-========================
  * NEW: auto mode for adjustable lane position
   * First enable adjustable lane position toggle, then activate by pressing left then right (or right then left) within 2 seconds
   * Disable by pressing either lane position button
@@ -285,8 +203,6 @@ Version tw-0.8.12-5_twd (2022-08-04)
  * IMPROVED: smooth in acceleration after a lead turns right in front of you
  * IMPROVED: dynamic gas/brake threshold for more accurate gm long control
 
-Version tw-0.8.12-4_tws (2022-07-20)
-========================
  * NEW: Added "resume required" alert when lead car pulls away 
  * NEW: When map-curve braking or speed-limit control are enabled, current signal strength is shown above max speed indicator onroad
  * IMPROVED: ['17 Volt] Eliminate rollback when autoresuming behind lead on hill
@@ -310,8 +226,6 @@ Version tw-0.8.12-4_tws (2022-07-20)
  * IMPROVED: gas/brake pitch-based adjust gets a 1% grade deadzone
  * IMPROVED: dynamic lane profile now switches to laneless before entering curves
 
-Version tw-0.8.12-3_tws (2022-06-29)
-========================
  * IMPROVED: Vision and/or map-based curve braking separately toggleable by tapping steering wheel icon
   * Tap to cycle between no-curve-braking/vision-only/vision+map
   * Vision-only is indicated by a white circle around the wheel icon, and vision+map is indicated by a green circle
@@ -322,8 +236,6 @@ Version tw-0.8.12-3_tws (2022-06-29)
   * Pitch is calculated using current and predicted pitch to provide a smoothed version of the current pitch with no delay!
  * IMPROVED: gm better gas/brake lookup tables so that the car produces the accel/decel openpilot thinks it will for a given gas/brake command (qadmus again!!!)
 
-Version tw-0.8.12-1_tws (2022-04-27)
-========================
  * NEW: [optional w/ toggle] Torque-based steering control for Volt and Acadia
  * IMPROVED: [Volt] inproved (non-torque-based) steering performance too!
  * IMPROVED: ['18 Volt] auto-creep; still not as good as auto-resume
