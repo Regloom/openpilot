@@ -1937,7 +1937,7 @@ static void ui_draw_measures(UIState *s){
             {
             snprintf(name, sizeof(name), "LN OFFSET");
             auto dat = scene.lateral_plan.getLaneOffset();
-            if (s->is_metric) {
+            if (s->scene.is_metric) {
               snprintf(unit, sizeof(unit), "m");
               snprintf(val, sizeof(val), "%.1f", dat);
             }
