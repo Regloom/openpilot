@@ -48,7 +48,7 @@ MAX_ABS_PRED_PITCH_DELTA = MAX_ABS_PITCH * 0.5 * DT_CTRL # 10% grade per second
 SIMULATION = "SIMULATION" in os.environ
 NOSENSOR = "NOSENSOR" in os.environ
 IGNORE_PROCESSES = {"rtshield", "uploader", "deleter", "loggerd", "logmessaged", "tombstoned", "gpsd",
-                    "logcatd", "proclogd", "clocksd", "updated", "timezoned", "manage_athenad"} | \
+                    "logcatd", "proclogd", "clocksd", "updated", "timezoned", "manage_athenad", "mapd"} | \
                     {k for k, v in managed_processes.items() if not v.enabled}
 
 ACTUATOR_FIELDS = set(car.CarControl.Actuators.schema.fields.keys())
@@ -81,6 +81,10 @@ class Controls:
     self.use_sensors = False
     
     self.gpsWasOK = False
+    
+    # Last frame values so that we only need to update lat/lon when model updates
+    self.actuators_last = None
+    self.lac_log_last = None
 
     # Setup sockets
     self.pm = pm
@@ -97,6 +101,9 @@ class Controls:
     joystick_packet = ['testJoystick'] if self.joystick_mode else []
     
     self.gray_panda_support_enabled = params.get_bool("GrayPandaSupport")
+    self.low_overhead_mode = params.get_bool("LowOverheadMode")
+    self.low_overhead_ignore_base = {"loggerd", "updated", "uploader", "dmonitoringmodeld", "dmonitoringd", "driverMonitoringState", "gpsLocationExternal"}
+    self.low_overhead_ignore = self.low_overhead_ignore_base
 
     self.sm = sm
     if self.sm is None:
@@ -248,7 +255,7 @@ class Controls:
     self.intervention_last_t = sec_since_boot()
     self.distraction_last_t = sec_since_boot()
     self.params_check_last_t = 0.0
-    self.params_check_freq = 0.3
+    self.params_check_freq = 1.0
     self._params = params
     self.params_write_freq = 30.0
     self.params_write_last_t = sec_since_boot()
@@ -282,7 +289,8 @@ class Controls:
 
     self.events.clear()
     self.events.add_from_msg(CS.events)
-    self.events.add_from_msg(self.sm['driverMonitoringState'].events)
+    if not self.low_overhead_mode:
+      self.events.add_from_msg(self.sm['driverMonitoringState'].events)
     self.events.add_from_msg(self.sm['longitudinalPlan'].eventsDEPRECATED)
 
     # Handle startup event
@@ -307,6 +315,11 @@ class Controls:
       if screen_tapped:
         self.CI.screen_tapped = True
         put_nonblocking("ScreenTapped", "0")
+      self.low_overhead_mode = self._params.get_bool("LowOverheadMode")
+      if self.low_overhead_mode:
+        self.low_overhead_ignore = self.low_overhead_ignore_base
+      else:
+        self.low_overhead_ignore = set()
       self.distance_last = CS.vEgo * (t - self.params_check_last_t)
       self.distance_traveled_total += self.distance_last
       if CS.gearShifter in ['drive', 'low', 'reverse']:
@@ -340,7 +353,7 @@ class Controls:
         self.intervention_last_t = t
         self.distraction_last_t = t
       else:
-        car_interaction = CS.brakePressed or CS.gas > 1e-5 or CS.steeringPressed
+        car_interaction = CS.brakePressed or CS.gas > 1e-5 or (CS.steeringPressed and CS.vEgo > self.CP.minSteerSpeed)
         if screen_tapped or car_interaction or self.CI.driver_interacted:
           if self.interaction_timer > 2.0:
             self.interaction_count_session += 1
@@ -354,7 +367,7 @@ class Controls:
             self.intervention_count_total += 1
           self.intervention_last_t = t
           self.intervention_dist = 0.0
-        if not car_interaction and self.sm['driverMonitoringState'].isDistracted or CS.vEgo < 0.1:
+        if not car_interaction and not self.low_overhead_mode and self.sm['driverMonitoringState'].isDistracted or CS.vEgo < 0.1:
           if CS.vEgo > 0.1 and self.distraction_timer > 2.0:
             self.distraction_count_session += 1
             self.distraction_count_total += 1
@@ -472,15 +485,16 @@ class Controls:
       self.events.add(EventName.radarFault)
     elif not self.sm.valid["pandaState"]:
       self.events.add(EventName.usbError)
-    elif not self.sm.all_alive_and_valid():
-      self.events.add(EventName.commIssue)
-      if not self.logged_comm_issue:
-        invalid = [s for s, valid in self.sm.valid.items() if not valid]
-        not_alive = [s for s, alive in self.sm.alive.items() if not alive]
-        cloudlog.event("commIssue", invalid=invalid, not_alive=not_alive)
-        self.logged_comm_issue = True
-    else:
-      self.logged_comm_issue = False
+    elif not self.sm.all_alive_and_valid(ignore=list(self.low_overhead_ignore)):
+      invalid = [s for s, valid in self.sm.valid.items() if not valid and s not in self.low_overhead_ignore]
+      not_alive = [s for s, alive in self.sm.alive.items() if not alive and s not in self.low_overhead_ignore]
+      if len(invalid) + len(not_alive) > 0:
+        self.events.add(EventName.commIssue)
+        if not self.logged_comm_issue:
+          cloudlog.event("commIssue", invalid=invalid, not_alive=not_alive)
+          self.logged_comm_issue = True
+        else:
+          self.logged_comm_issue = False
 
     if not self.sm['lateralPlan'].mpcSolutionValid:
       self.events.add(EventName.plannerError)
@@ -532,7 +546,7 @@ class Controls:
 
       # Check if all manager processes are running
       not_running = set(p.name for p in self.sm['managerState'].processes if not p.running)
-      if self.sm.rcv_frame['managerState'] and (not_running - IGNORE_PROCESSES):
+      if self.sm.rcv_frame['managerState'] and (not_running - (IGNORE_PROCESSES | self.low_overhead_ignore)):
         self.events.add(EventName.processNotRunning)
 
     # Only allow engagement with brake pressed when stopped behind another stopped car
@@ -789,25 +803,33 @@ class Controls:
 
     if not self.joystick_mode:
       # accel PID loop
-      pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, CS.vEgo, self.v_cruise_kph * CV.KPH_TO_MS, self.CI)
-      t_since_plan = (self.sm.frame - self.sm.rcv_frame['longitudinalPlan']) * DT_CTRL
-      actuators.accel = self.LoC.update(self.active, CS, self.CP, long_plan, pid_accel_limits, t_since_plan, MADS_lead_braking_enabled=self.MADS_lead_braking_enabled)
-      
-      # compute pitch-compensated accel
-      if self.sm.updated['liveParameters']:
-        self.pitch = apply_deadzone(self.sm['liveParameters'].pitchFutureLong, self.pitch_accel_deadzone)
-      actuators.accelPitchCompensated = actuators.accel + ((ACCELERATION_DUE_TO_GRAVITY * math.sin(self.pitch)) if self.use_sensors else 0.0)
-
-      # Steering PID loop and lateral MPC
-      desired_curvature, desired_curvature_rate = get_lag_adjusted_curvature(self.CP, CS.vEgo,
-                                                                             lat_plan.psis,
-                                                                             lat_plan.curvatures,
-                                                                             lat_plan.curvatureRates)
-      actuators.steer, actuators.steeringAngleDeg, lac_log = self.LaC.update(self.lat_active, 
-                                                                             CS, self.CP, self.VM, params, 
-                                                                             desired_curvature, desired_curvature_rate, self.sm['liveLocationKalman'],
-                                                                             use_roll=self.use_sensors, lat_plan=lat_plan,
-                                                                             model_data=self.sm['modelV2'])
+      if self.sm.updated['longitudinalPlan'] or self.sm.updated['lateralPlan'] or self.actuators_last is None:
+        pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, CS.vEgo, self.v_cruise_kph * CV.KPH_TO_MS, self.CI)
+        t_since_plan = (self.sm.frame - self.sm.rcv_frame['longitudinalPlan']) * DT_CTRL
+        actuators.accel = self.LoC.update(self.active, CS, self.CP, long_plan, pid_accel_limits, t_since_plan, MADS_lead_braking_enabled=self.MADS_lead_braking_enabled)
+        
+        # compute pitch-compensated accel
+        if self.sm.updated['liveParameters']:
+          self.pitch = apply_deadzone(self.sm['liveParameters'].pitchFutureLong, self.pitch_accel_deadzone)
+        actuators.accelPitchCompensated = actuators.accel + ((ACCELERATION_DUE_TO_GRAVITY * math.sin(self.pitch)) if self.use_sensors else 0.0)
+        
+        desired_curvature, desired_curvature_rate = get_lag_adjusted_curvature(self.CP, CS.vEgo,
+                                                                            lat_plan.psis,
+                                                                            lat_plan.curvatures,
+                                                                            lat_plan.curvatureRates)
+        actuators.steer, actuators.steeringAngleDeg, lac_log = self.LaC.update(self.lat_active, 
+                                                                            CS, self.CP, self.VM, params, 
+                                                                            desired_curvature, desired_curvature_rate, self.sm['liveLocationKalman'],
+                                                                            use_roll=self.use_sensors, lat_plan=lat_plan,
+                                                                            model_data=self.sm['modelV2'])
+        self.actuators_last = actuators
+        self.lac_log_last = lac_log
+      else:
+        actuators.steer = self.actuators_last.steer
+        actuators.steeringAngleDeg = self.actuators_last.steeringAngleDeg
+        actuators.accel = self.actuators_last.accel
+        actuators.accelPitchCompensated = self.actuators_last.accelPitchCompensated
+        lac_log = self.lac_log_last
     else:
       lac_log = log.ControlsState.LateralDebugState.new_message()
       if self.sm.rcv_frame['testJoystick'] > 0 and self.active:
@@ -926,7 +948,7 @@ class Controls:
     CC.onePedalD = float(self.CI.CC.one_pedal_pid.d)
     CC.onePedalF = float(self.CI.CC.one_pedal_pid.f)
 
-    force_decel = (self.sm['driverMonitoringState'].awarenessStatus < 0.) or \
+    force_decel = (not self.low_overhead_mode and self.sm['driverMonitoringState'].awarenessStatus < 0.) or \
                   (self.state == State.softDisabling)
 
     # Curvature & Steering angle

@@ -1,6 +1,5 @@
 import math
 import numpy as np
-from common.filter_simple import FirstOrderFilter
 from common.numpy_fast import interp, clip
 from common.realtime import sec_since_boot, DT_MDL
 from common.op_params import opParams
@@ -20,6 +19,7 @@ SNG_DIST_COST = MPC_COST_LONG.DISTANCE
 SNG_ACCEL_COST = MPC_COST_LONG.ACCELERATION
 
 CLOSE_FOLLOW_MIN_FOLLOW_DIST_S = 0.2
+MEDIUM_FOLLOW_MIN_FOLLOW_DIST_S = 0.5
 FOLLOW_PROFILES = [
   [ # one-bar
     [-1.4, 2.8], # bp0 and bp1; lead car relative velocities [m/s] (set both to 0.0 to disable dynamic brakepoints)
@@ -70,6 +70,14 @@ close_max_delta_follow = abs(CLOSE_FOLLOW_EQUIL_FOLLOW_DISTANCE - CLOSE_FOLLOW_M
 CLOSE_TOWARDS_BP = [0.0, 2.0] # corresponds to the bounds of the FP_close_gas_factor opParam
 CLOSE_TOWARDS_V = [0.0, close_max_delta_follow]
 CLOSE_AWAY_RANGE = abs(cp[1][-1] - CLOSE_FOLLOW_EQUIL_FOLLOW_DISTANCE)
+
+mp = FOLLOW_PROFILES[1] # medium follow profile
+# these are used for opParams adjustment of medium-follow responsiveness
+MEDIUM_FOLLOW_EQUIL_FOLLOW_DISTANCE = interp(0.0, mp[0], mp[1])
+medium_max_delta_follow = abs(MEDIUM_FOLLOW_EQUIL_FOLLOW_DISTANCE - MEDIUM_FOLLOW_MIN_FOLLOW_DIST_S)
+MEDIUM_TOWARDS_BP = [0.0, 2.0] # corresponds to the bounds of the FP_close_gas_factor opParam
+MEDIUM_TOWARDS_V = [0.0, medium_max_delta_follow]
+MEDIUM_AWAY_RANGE = abs(mp[1][-1] - MEDIUM_FOLLOW_EQUIL_FOLLOW_DISTANCE)
 
 FP_MIN_MAX_DIST_COSTS = [[f(f(fp[6]),f(fp[8])) for f in [min,max]] for fp in FOLLOW_PROFILES]
 
@@ -311,14 +319,15 @@ class LeadMpc():
     self.dist_cost_last = MPC_COST_LONG.DISTANCE
     self.accel_cost_last = MPC_COST_LONG.ACCELERATION
     self.stopping_distance = 0.
-    self.stopping_distance_offset = 0.
 
     self.tr_override = False
+    self.tr_buffer = 0.0
     
     self.v_solution = np.zeros(CONTROL_N)
     self.a_solution = np.zeros(CONTROL_N)
     self.j_solution = np.zeros(CONTROL_N)
     
+    self.follow_level = 1
     self.follow_level_last = 1
     self.follow_level_df = 0.
     self.dynamic_follow_active = False
@@ -327,9 +336,12 @@ class LeadMpc():
     self.long_control_active = False
     
     self.params_check_last_t = 0.
-    self.params_check_freq = 0.5 # check params at 2Hz
+    self.params_check_freq = 1.0 # check params at 2Hz
     self._params = Params()
     self._op_params = opParams(calling_function="lead mpc LeadMpc")
+    self.stopping_distance_offset = self._op_params.get('FP_stop_distance_offset_m', force_update=True)
+    self.jerk_cost = self._op_params.get('FP_jerk_cost', force_update=True)
+    self.jerk_cost_last = self.jerk_cost
     
     self._follow_profiles = FOLLOW_PROFILES[:]
     self.update_op_params()
@@ -353,13 +365,26 @@ class LeadMpc():
   
   def update_op_params(self):
     self._close_gas_factor = self._op_params.get('FP_close_gas_factor')
+    self._medium_gas_factor = self._op_params.get('FP_medium_gas_factor')
     self._follow_distance_offsets = [self._op_params.get(f"FP_{i}_distance_offset_s") for i in ['close','medium','far']]
+    # update close follow gas factor
     close_follow_towards_delta = interp(self._close_gas_factor, CLOSE_TOWARDS_BP, CLOSE_TOWARDS_V)
     new_close_follow_towards = max(CLOSE_FOLLOW_MIN_FOLLOW_DIST_S,
                                    CLOSE_FOLLOW_EQUIL_FOLLOW_DISTANCE - close_follow_towards_delta)
     close_follow_away_delta = CLOSE_AWAY_RANGE * self._close_gas_factor
     new_close_follow_away = CLOSE_FOLLOW_EQUIL_FOLLOW_DISTANCE + close_follow_away_delta
     self._follow_profiles[0][1] = [new_close_follow_towards, new_close_follow_away]
+    # now medium follow gas factor
+    medium_follow_towards_delta = interp(self._medium_gas_factor, MEDIUM_TOWARDS_BP, MEDIUM_TOWARDS_V)
+    new_medium_follow_towards = max(MEDIUM_FOLLOW_MIN_FOLLOW_DIST_S,
+                                    MEDIUM_FOLLOW_EQUIL_FOLLOW_DISTANCE - medium_follow_towards_delta)
+    medium_follow_away_delta = MEDIUM_AWAY_RANGE * self._medium_gas_factor
+    new_medium_follow_away = MEDIUM_FOLLOW_EQUIL_FOLLOW_DISTANCE + medium_follow_away_delta
+    self._follow_profiles[1][1] = [new_medium_follow_towards, new_medium_follow_away]
+    
+    self.stopping_distance_offset = self._op_params.get('FP_stop_distance_offset_m')
+    
+    self.jerk_cost = self._op_params.get('FP_jerk_cost')
 
   def update(self, CS, radarstate, v_cruise, a_target, active):
     v_ego = CS.vEgo
@@ -372,9 +397,9 @@ class LeadMpc():
     # Setup current mpc state
     self.cur_state[0].x_ego = 0.0
     
-    follow_level = int(CS.readdistancelines) - 1 # use base 0
+    self.follow_level = int(CS.readdistancelines) - 1 # use base 0
     if self.MADS_lead_braking_enabled and not self.long_control_active:
-      follow_level = 1
+      self.follow_level = 1
     
     t = sec_since_boot()
     if t - self.params_check_last_t >= self.params_check_freq:
@@ -389,12 +414,12 @@ class LeadMpc():
       self.df.reset(1)
       self.dynamic_follow_active = False
     
-    if follow_level != self.follow_level_last:
-      self.df.set_fp(follow_level)
+    if self.follow_level != self.follow_level_last:
+      self.df.set_fp(self.follow_level)
       
-    if follow_level < 0 or follow_level > 2:
-      follow_level = 1
-    fp = self._follow_profiles[follow_level]
+    if self.follow_level < 0 or self.follow_level > 2:
+      self.follow_level = 1
+    fp = self._follow_profiles[self.follow_level]
     stopping_distance = fp[4] + self.stopping_distance_offset
     
     if lead is not None and lead.status:
@@ -418,12 +443,11 @@ class LeadMpc():
       self.cur_state[0].v_l = v_lead
 
       # Setup mpc
-      # dynamic follow 
-      if self.dynamic_follow_active:
+      if self.dynamic_follow_active: # dynamic follow 
         self.follow_level_df = self.df.update(lead.status, lead.dRel, v_lead, v_ego, self.tr)
         tr, dist_cost, accel_cost = interp_follow_profile(v_ego, v_lead, lead.dRel, self.follow_level_df, self._follow_profiles, self._follow_distance_offsets)
       else:
-        tr, dist_cost, accel_cost = calc_follow_profile(v_ego, v_lead, lead.dRel, follow_level, self._follow_profiles, self._follow_distance_offsets)
+        tr, dist_cost, accel_cost = calc_follow_profile(v_ego, v_lead, lead.dRel, self.follow_level, self._follow_profiles, self._follow_distance_offsets)
     else:
       self.prev_lead_status = False
       # Fake a fast lead car, so mpc keeps running
@@ -435,19 +459,26 @@ class LeadMpc():
       dist_cost = MPC_COST_LONG.DISTANCE
       accel_cost = MPC_COST_LONG.ACCELERATION
     
-    if dist_cost != self.dist_cost_last or accel_cost != self.accel_cost_last:
-      self.libmpc.change_costs(MPC_COST_LONG.TTC, dist_cost, accel_cost, MPC_COST_LONG.JERK)
+    if dist_cost != self.dist_cost_last or accel_cost != self.accel_cost_last or self.jerk_cost != self.jerk_cost_last:
+      self.libmpc.change_costs(MPC_COST_LONG.TTC, dist_cost, accel_cost, self.jerk_cost)
       self.dist_cost_last = dist_cost
       self.accel_cost_last = accel_cost
+      self.jerk_cost_last = self.jerk_cost
     
+    tr += self.tr_buffer
     
     if not self.tr_override:
       self.tr = tr
-      
+
+    # max speed-based tr (can't go past 120m or so).
+    max_lead_dist = 120.0
+    max_tr = max_lead_dist / max(v_ego, 0.01)
+    self.tr = min(max_tr, self.tr)
+
     self.dist_cost = dist_cost / MPC_COST_LONG.DISTANCE
     self.accel_cost = accel_cost / MPC_COST_LONG.ACCELERATION
     self.stopping_distance = stopping_distance
-    self.follow_level_last = follow_level
+    self.follow_level_last = self.follow_level
       
     t = sec_since_boot()
     self.n_its = 0

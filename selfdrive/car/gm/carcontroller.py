@@ -82,6 +82,7 @@ class CarController():
     self.apply_gas = 0
     self.apply_brake_out = 0
     self.apply_brake_in = 0
+    self.apply_brake_out_last = 0
     self.apply_steer = 0
     self.brakes_allowed = False
     self.threshold_accel = 0.0
@@ -109,6 +110,10 @@ class CarController():
       self.one_pedal_pid._k_p = [bp, self._op_params.get('TUNE_LONG_kp')]
       self.one_pedal_pid._k_i = [bp, self._op_params.get('TUNE_LONG_ki')]
       self.one_pedal_pid._k_d = [bp, self._op_params.get('TUNE_LONG_kd')]
+      
+      self.params.BRAKE_RATE_LIMIT_BP = [i * CV.MPH_TO_MS for i in self._op_params.get('TUNE_LONG_brake_rate_limit_speed_mph')]
+      self.params.BRAKE_RATE_UP_LIMIT = self._op_params.get('TUNE_LONG_brake_rate_up_limit')
+      self.params.BRAKE_RATE_DOWN_LIMIT = self._op_params.get('TUNE_LONG_brake_rate_down_limit')
     
     
   def update(self, enabled, CS, frame, actuators,
@@ -127,6 +132,8 @@ class CarController():
       self.lka_steering_cmd_counter_last = CS.lka_steering_cmd_counter
     elif (frame % P.STEER_STEP) == 0:
       lkas_enabled = (enabled or CS.pause_long_on_gas_press or (CS.MADS_enabled and CS.cruiseMain)) and CS.lkaEnabled and not (CS.out.steerWarning or CS.out.steerError) and CS.out.vEgo > self.min_steer_speed and CS.lane_change_steer_factor > 0.
+      if CS.lka_temp_disabled:
+        lkas_enabled = False
       if lkas_enabled:
         new_steer = int(round(actuators.steer * P.STEER_MAX * CS.lane_change_steer_factor))
         P.v_ego = CS.out.vEgo
@@ -319,6 +326,13 @@ class CarController():
       
       if enabled and self.brakes_allowed:
         self.apply_brake_out = self.apply_brake_in
+        # Apply brake rate limits
+        if self.apply_brake_out > self.apply_brake_out_last:
+          brake_rate_up = int(round(interp(CS.out.vEgo, P.BRAKE_RATE_LIMIT_BP, P.BRAKE_RATE_UP_LIMIT)))
+          self.apply_brake_out = min(self.apply_brake_out, self.apply_brake_out_last + brake_rate_up)
+        else:
+          brake_rate_down = int(round(interp(CS.out.vEgo, P.BRAKE_RATE_LIMIT_BP, P.BRAKE_RATE_DOWN_LIMIT)))
+          self.apply_brake_out = max(self.apply_brake_out, self.apply_brake_out_last - brake_rate_down)
 
       if CS.cruiseMain and not enabled and not CS.park_assist_active and ((CS.autoHold and not CS.regen_paddle_pressed and CS.time_in_drive_autohold >= CS.MADS_long_min_time_in_drive) or (CS.one_pedal_mode_active and CS.time_in_drive_one_pedal >= CS.MADS_long_min_time_in_drive)) and CS.autoHoldActive and not CS.out.gas > 1e-5 and CS.out.vEgo < 0.02:
         # Auto Hold State
@@ -326,6 +340,8 @@ class CarController():
 
         at_full_stop = standstill
         near_stop = (CS.out.vEgo < P.NEAR_STOP_BRAKE_PHASE)
+        if at_full_stop and near_stop:
+          self.apply_brake_out = P.MAX_BRAKE
         can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, CanBus.CHASSIS, self.apply_brake_out, idx, near_stop, at_full_stop))
         CS.autoHoldActivated = True
 
@@ -342,7 +358,8 @@ class CarController():
             self.apply_gas = P.MAX_ACC_REGEN
           at_full_stop = (enabled or (CS.out.onePedalModeActive or CS.MADS_lead_braking_enabled)) and standstill and car_stopping
           near_stop = (enabled or (CS.out.onePedalModeActive or CS.MADS_lead_braking_enabled)) and (CS.out.vEgo < P.NEAR_STOP_BRAKE_PHASE) and car_stopping
-
+          if at_full_stop and near_stop:
+            self.apply_brake_out = P.MAX_BRAKE
         can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, CanBus.CHASSIS, self.apply_brake_out, idx, near_stop, at_full_stop))
         CS.autoHoldActivated = False
 
@@ -360,6 +377,8 @@ class CarController():
 
 
     CS.brake_cmd = self.apply_brake_out
+    
+    self.apply_brake_out_last = self.apply_brake_out
 
     # Send dashboard UI commands (ACC status), 25hz
     if (frame % 4) == 0:

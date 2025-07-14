@@ -143,9 +143,9 @@ class opEdit:  # use by running `python /data/openpilot/op_edit.py`
       if self.section == '':
         to_print.append(f'{COLORS.INFO}{COLORS.UNDERLINE}{"Common" if self.compact_view else "All"} parameters:{COLORS.ENDC}{COLORS.ENDC}')
       blue_gradient = [33, 39, 45, 51, 87]
-      n_pad = max([len(i) for i in self.params])
+      n_pad = max([len(i) for i in self.params]) if len(self.params) > 0 else 0
       n_pad_idx = int(log10(len(self.params) + (0 if self.section != '' else len(sections))))+2
-      n_pad_vals = max([len(str(i)) for i in values_list])+1
+      n_pad_vals = max([len(str(i)) for i in values_list])+1 if len(values_list) > 0 else 0
       for idx, param in enumerate(self.params):
         _color = blue_gradient[min(round(idx / len(self.params) * len(blue_gradient)), len(blue_gradient) - 1)]
         is_default = (self.op_params.get(param, force_update=True) == self.op_params.fork_params[param].default_value)
@@ -392,7 +392,8 @@ class opEdit:  # use by running `python /data/openpilot/op_edit.py`
         elif not param_info.value_is_valid(new_value):
           self.error('The type of data you entered ({}) is not one of the allowed values ({}) for this parameter!'.format(new_value, ", ".join(param_info.allowed_vals)))
           continue
-        if param_info.value_clipped(new_value):
+        new_value, was_clipped = param_info.value_clipped(new_value)
+        if was_clipped:
           self.warning('Value out of bounds: clipped to {}'.format(new_value))
           
         if param_info.linked_op_param_check_param != '' and param_info.linked_op_param_check_param in self.op_params.fork_params and self.op_params.get(param_info.linked_op_param_check_param, force_update=True):

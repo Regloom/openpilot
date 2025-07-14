@@ -358,7 +358,7 @@ static void draw_lead(UIState *s, float d_rel, float v_rel, const vertex_data &v
 static void draw_other_leads(UIState *s, bool lead_drawn) {
   // Draw lead car circle
   if (s->scene.adjacent_lead_info_print_enabled){
-    int r1 = 8, r2 = 75;
+    int r1 = 20, r2 = 75;
     int dr = r2 - r1;
     int i = 0;
     float fill_screen_dist_offset = (s->scene.lead_info_print_enabled ? 50 : 10);
@@ -375,11 +375,11 @@ static void draw_other_leads(UIState *s, bool lead_drawn) {
         float screen_dist = std::clamp(std::fabs(x - s->scene.lead_x) - fill_screen_dist_offset, 0.f, fill_screen_dist_max);
         float alpha_factor = 1. - float(screen_dist) / fill_screen_dist_max;
         alpha_fill -= 60. * alpha_factor;
-        alpha_stroke -= 160. * alpha_factor;
+        alpha_stroke -= 100. * alpha_factor;
 
         screen_dist = std::clamp(std::fabs(x - s->scene.lead_x) - text_screen_dist_offset, 0.f, text_screen_dist_max);
         alpha_factor = 1. - float(screen_dist) / text_screen_dist_max;
-        alpha_text -= 190. * alpha_factor;
+        alpha_text -= 100. * alpha_factor;
       }
       int r = r2 - int(float(dr) * d / 180.);
       r = (r < r1 ? r1 : r);
@@ -414,11 +414,11 @@ static void draw_other_leads(UIState *s, bool lead_drawn) {
         float screen_dist = std::clamp(std::fabs(x - s->scene.lead_x) - fill_screen_dist_offset, 0.f, fill_screen_dist_max);
         float alpha_factor = 1. - float(screen_dist) / fill_screen_dist_max;
         alpha_fill -= 60. * alpha_factor;
-        alpha_stroke -= 160. * alpha_factor;
+        alpha_stroke -= 100. * alpha_factor;
 
         screen_dist = std::clamp(std::fabs(x - s->scene.lead_x) - text_screen_dist_offset, 0.f, text_screen_dist_max);
         alpha_factor = 1. - float(screen_dist) / text_screen_dist_max;
-        alpha_text -= 190. * alpha_factor;
+        alpha_text -= 100. * alpha_factor;
       }
       int r = r2 - int(float(dr) * d / 180.);
       r = (r < r1 ? r1 : r);
@@ -453,11 +453,11 @@ static void draw_other_leads(UIState *s, bool lead_drawn) {
         float screen_dist = std::clamp(std::fabs(x - s->scene.lead_x) - fill_screen_dist_offset, 0.f, fill_screen_dist_max);
         float alpha_factor = 1. - float(screen_dist) / fill_screen_dist_max;
         alpha_fill -= 60. * alpha_factor;
-        alpha_stroke -= 160. * alpha_factor;
+        alpha_stroke -= 100. * alpha_factor;
 
         screen_dist = std::clamp(std::fabs(x - s->scene.lead_x) - text_screen_dist_offset, 0.f, text_screen_dist_max);
         alpha_factor = 1. - float(screen_dist) / text_screen_dist_max;
-        alpha_text -= 190. * alpha_factor;
+        alpha_text -= 100. * alpha_factor;
       }
       int r = r2 - int(float(dr) * d / 180.);
       r = (r < r1 ? r1 : r);
@@ -617,12 +617,7 @@ static void ui_draw_vision_lane_lines(UIState *s) {
   // paint lanelines
   for (int i = 0; i < std::size(scene.lane_line_vertices); i++) {
     NVGcolor color;
-    if (!scene.lateralPlan.lanelessModeStatus) {
-      color = interp_alert_color(1.f - scene.lane_line_probs[i], 255);
-    }
-    else{
-       color = COLOR_WHITE_ALPHA(int(scene.lane_line_probs[i] * 180.));
-    }
+    color = COLOR_WHITE_ALPHA(int(scene.lane_line_probs[i] * 180.));
     ui_draw_line(s, scene.lane_line_vertices[i], &color, nullptr);
   }
   if (!scene.lateralPlan.lanelessModeStatus) {
@@ -1568,7 +1563,7 @@ static void ui_draw_measures(UIState *s){
           case UIMeasure::LAT_ACCEL:
             {
             snprintf(name, sizeof(name), "LAT ACC");
-            snprintf(val, sizeof(val), "%.1f", sm["liveLocationKalman"].getLiveLocationKalman().getAccelerationCalibrated().getValue()[1]);
+            snprintf(val, sizeof(val), "%.1f", scene.lat_accel);
             snprintf(unit, sizeof(unit), "m/s²");
             break;}
 
@@ -3495,7 +3490,7 @@ static void ui_draw_vision_face(UIState *s) {
   const int center_x = maxspeed_rect.centerX();
   int center_y = s->fb_h - footer_h / 2;
   center_y = offset_button_y(s, center_y, radius);
-  ui_draw_circle_image(s, center_x, center_y, radius, "driver_face", s->scene.dm_active);
+  ui_draw_circle_image(s, center_x, center_y, radius, "driver_face", s->scene.dm_active && !s->scene.low_overhead_mode);
 }
 
 static void ui_draw_vision_power_meter(UIState *s) {

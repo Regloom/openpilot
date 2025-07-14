@@ -72,7 +72,7 @@ class CarInterface(CarInterfaceBase):
     self.cruise_enabled_last = False
     
   params_check_last_t = 0.
-  params_check_freq = 0.1 # check params at 10Hz
+  params_check_freq = 1.0 # check params at 10Hz
   params = CarControllerParams()
   
   @staticmethod
@@ -347,6 +347,8 @@ class CarInterface(CarInterfaceBase):
     ret.longitudinalTuning.kpV = [2.4, 1.5]
     ret.longitudinalTuning.kiBP = [0.]
     ret.longitudinalTuning.kiV = [0.36]
+    
+    nnff = Params().get_bool("EnableNNFF")
 
     if candidate in [CAR.VOLT, CAR.VOLT18]:
       # supports stop and go, but initial engage must be above 18mph (which include conservatism)
@@ -362,9 +364,9 @@ class CarInterface(CarInterfaceBase):
       if (Params().get_bool("EnableTorqueControl")):
         ret.lateralTuning.init('torque')
         ret.lateralTuning.torque.useSteeringAngle = True
-        ret.lateralTuning.torque.kp = 0.48
+        ret.lateralTuning.torque.kp = 1.0 if nnff else 0.48
         ret.lateralTuning.torque.ki = 0.15
-        ret.lateralTuning.torque.kd = 0.04
+        ret.lateralTuning.torque.kd = 0.0 if nnff else 0.04
         ret.lateralTuning.torque.kf = 1.0 # use with custom torque ff
         ret.lateralTuning.torque.friction = 1.0 # for custom lateral jerk ff
       else:
@@ -379,7 +381,7 @@ class CarInterface(CarInterfaceBase):
 
       # Only tuned to reduce oscillations. TODO.
       ret.longitudinalTuning.kpBP = [5., 15., 35.]
-      ret.longitudinalTuning.kpV = [0.8, .9, 0.8]
+      ret.longitudinalTuning.kpV = [0.75, .9, 0.8]
       ret.longitudinalTuning.kiBP = [5., 15., 35.]
       ret.longitudinalTuning.kiV = [0.08, 0.13, 0.13]
       ret.longitudinalTuning.kdBP = [5., 25.]
@@ -416,9 +418,9 @@ class CarInterface(CarInterfaceBase):
       if (Params().get_bool("EnableTorqueControl")):
         ret.lateralTuning.init('torque')
         ret.lateralTuning.torque.useSteeringAngle = True
-        ret.lateralTuning.torque.kp = 0.66
+        ret.lateralTuning.torque.kp = 1.0 if nnff else 0.66
         ret.lateralTuning.torque.ki = 0.15
-        ret.lateralTuning.torque.kd = 0.03
+        ret.lateralTuning.torque.kd = 0.0 if nnff else 0.03
         ret.lateralTuning.torque.kf = 1. # custom ff
         ret.lateralTuning.torque.friction = 0.01
       else:
@@ -444,9 +446,9 @@ class CarInterface(CarInterfaceBase):
       if (Params().get_bool("EnableTorqueControl")):
         ret.lateralTuning.init('torque')
         ret.lateralTuning.torque.useSteeringAngle = True
-        ret.lateralTuning.torque.kp = 0.48
+        ret.lateralTuning.torque.kp = 1.0 if nnff else 0.48
         ret.lateralTuning.torque.ki = 0.13
-        ret.lateralTuning.torque.kd = 0.03
+        ret.lateralTuning.torque.kd = 0.0 if nnff else 0.03
         ret.lateralTuning.torque.kf = 1.0 # use with custom torque ff
         ret.lateralTuning.torque.friction = 0.14
       else:
@@ -522,8 +524,9 @@ class CarInterface(CarInterfaceBase):
     
     if Params().get_bool('OPParamsLateralOverride'):
       op_params = opParams("gm car_interface.py for lateral override")
-      lat_type = op_params.get('TUNE_LAT_type')
-      ret.minSteerSpeed = op_params.get('TUNE_LAT_min_steer_speed_mph') * CV.MPH_TO_MS
+      lat_type = op_params.get('TUNE_LAT_type', force_update=True)
+      ret.steerActuatorDelay = op_params.get('TUNE_LAT_steer_actuator_delay_s', force_update=True)
+      ret.minSteerSpeed = op_params.get('TUNE_LAT_min_steer_speed_mph', force_update=True) * CV.MPH_TO_MS
       if lat_type == 'torque':
         ret.lateralTuning.init('torque')
         ret.lateralTuning.torque.useSteeringAngle = op_params.get('TUNE_LAT_TRX_use_steering_angle', force_update=True)
@@ -702,6 +705,7 @@ class CarInterface(CarInterfaceBase):
       events.add(EventName.rebootImminent)
     
     if self.CS.cruiseMain:
+      self.CS.lka_temp_disabled = False
       if ret.vEgo < self.CP.minEnableSpeed:
         events.add(EventName.belowEngageSpeed)
       if self.CS.pause_long_on_gas_press:
@@ -714,6 +718,9 @@ class CarInterface(CarInterfaceBase):
       if not ret.standstill and self.CS.lane_change_steer_factor < 1.:
         events.add(car.CarEvent.EventName.blinkerSteeringPaused)
         steer_paused = True
+      if self.CS.regen_paddle_pressed and not cruiseEnabled and ret.vEgo > self.CP.minSteerSpeed and self.CS.regen_paddle_pause_steering:
+        self.CS.lka_temp_disabled = True
+        events.add(car.CarEvent.EventName.regenPaddleSteeringPaused)
       if ret.vEgo <= self.CP.minSteerSpeed and (not self.CS.autoHoldActivated or self.CS.out.onePedalModeActive):
         if ret.standstill and (self.CS.parked_timer > self.CS.parked_timer_min_time or (cruiseEnabled or self.CS.out.onePedalModeActive) and t - self.CS.sessionInitTime > 10. and not self.CS.resume_required):
           events.add(car.CarEvent.EventName.stoppedWaitForGas)

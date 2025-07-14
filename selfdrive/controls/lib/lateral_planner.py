@@ -1,5 +1,6 @@
 import math
 import numpy as np
+from collections import defaultdict
 from common.realtime import sec_since_boot, DT_MDL
 from common.numpy_fast import interp
 from common.op_params import opParams
@@ -16,6 +17,9 @@ LaneChangeState = log.LateralPlan.LaneChangeState
 LaneChangeDirection = log.LateralPlan.LaneChangeDirection
 LaneChangeAlert = log.LateralPlan.LaneChangeAlert
 
+LANE_POS_LOG = defaultdict(lambda: log.LateralPlan.LanePosition.center)
+LANE_POS_LOG[-1.0] = log.LateralPlan.LanePosition.right
+LANE_POS_LOG[1.0] = log.LateralPlan.LanePosition.left
 
 LANE_CHANGE_SPEED_MIN = 20.0 * CV.MPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.0
@@ -100,6 +104,7 @@ class LateralPlanner():
     
     self.path_cost = 1.0
     self.heading_cost = 1.0
+    self.steer_rate_cost_original = CP.steerRateCost
     self.steer_rate_cost = CP.steerRateCost
 
   def setup_mpc(self):
@@ -127,12 +132,12 @@ class LateralPlanner():
     if self._op_params.get('TUNE_LAT_do_override'):
       self.path_cost = self._op_params.get('TUNE_LAT_mpc_path_cost')
       self.heading_cost = self._op_params.get('TUNE_LAT_mpc_heading_cost')
-      self.steer_rate_cost = self._op_params.get('TUNE_LAT_mpc_steer_rate_cost')
+      self.steer_rate_cost = self.steer_rate_cost_original * self._op_params.get('TUNE_LAT_mpc_steer_rate_cost')
 
   def update(self, sm, CP):
     self.second += DT_MDL
     auto_lane_pos_active = self.auto_lane_pos_active
-    if self.second > 1.0:
+    if self.second > 0.3:
       self.update_op_params()
       self.use_lanelines = not Params().get_bool("EndToEndToggle")
       self.laneless_mode = int(Params().get("LanelessMode", encoding="utf8"))
@@ -455,10 +460,7 @@ class LateralPlanner():
       elif self.LP.lane_offset._lane_pos_auto == 0. and self.lane_pos != 0.:
         self.lane_pos = 0.
         put_nonblocking("LanePosition", "0")
-        
-    plan_send.lateralPlan.lanePosition = log.LateralPlan.LanePosition.left if self.LP.lane_offset.lane_pos == 1. \
-                                    else log.LateralPlan.LanePosition.right if self.LP.lane_offset.lane_pos == -1. \
-                                    else log.LateralPlan.LanePosition.center
     
-
+    plan_send.lateralPlan.lanePosition = LANE_POS_LOG[self.LP.lane_offset.lane_pos]
+    
     pm.send('lateralPlan', plan_send)

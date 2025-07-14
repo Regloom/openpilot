@@ -1,4 +1,50 @@
-Version tw-0.8.13 (2023-11-15)
+Version tw-0.8.12-22 (2025-06-28)
+========================
+- Add's new lead+1 based planning if extended radar is enabled
+  - This will follow a lead from farther back if the lead is tailgating their lead
+   - Adjustable in opparams in the follow profiles section
+- Add's @ctyrell's requested feature to pause MADS autosteer if the regen paddle is pressed
+  - Enable using the "MADS regen paddle steering pause" in Settings -> Toggles
+- Make lane positioning buttons respond to touch faster
+- Make lane positioning stay enabled even if lanelines become unclear (let me know if you encounter safety issues from this!!)
+
+Version tw-0.8.12-21 (2025-04-15)
+========================
+ - FIXED: Torque controller NNFF; Increase accuracy by fixing bug preventing use of instantaneous lateral jerk
+ - Try to prevent/reduce phantom braking by fixing issue where lead and lead+1 could be confused for one another
+ - PID NNFF is WIP as I fiddle with some improvements
+
+Version tw-0.8.12-20 (2025-02-17)
+========================
+ * IMPROVED: More accurate long control at higher speeds thanks to Mochi's incorporation of drag and rolling resistance
+ * IMPROVED: Decrease CPU use of controls by around 20% by only updating lat/lon controllers when modeld updates (which is at 20Hz rather than 100Hz)
+   * FIXED: Hotfix for running lat/lon controls at plannerd rate
+ * Decrease params update frequency in hopes of reducing IO overhead
+ * Smoother long control, especually stops, by preventing positive-accel P-error response
+ * Brightness control: only increase brightness for "warning"-level alerts if on darkest setting, and only increase brightness for alerts by one "level" (i.e. low to medium, or medium to high) regarless of brightness setting
+ * Vision turn speed controller (curve braking) bug fix for more accurate lateral torque saturation-based braking
+ * opparams:
+   * max-speed parameter for one-pedal mode, so that it won't toggle (using double regen paddle press) unless you're below the configured max speed (i.e. like Nissan and other brands' one-pedal modes)
+   * lateral torque controller kp-scaling based on long accel; i.e. you can lower kp when you're not accelerating/decelerating for smoother lat control, but then when stopping or accelerating, tighten lat control
+   * add long mpc tuning parameters to opparams
+   * update default opparams for long-range leads to prevent phantom braking due to long range leads
+
+Version tw-0.8.12-19 (2023-11-15)
+========================
+ * ATTENTION!!! OpenStreetMap-based features must not be used unless you have an external hotspot or your own sim card for data.
+   * After this update, you need to DISABLE TURN SPEED CONTROLLER AND SPEED LIMIT CONTROL AND THEN RESTART YOUR DEVICE!!!
+   * Comma's data plan for Comma Prime is no longer unlimited, therefore all non-Comma-service-related data use is strictly prohibited
+   * YOUR COMMA PRIME SUBSCRIPTION WILL BE TERMINATED IF YOU VIOLATE THIS RULE
+   * If you enable the turn speed controller or automatic speed limits, then OSM data will be fetched, so keep both of those features disabled unless you have your own source for cellular data
+ * NNFF improvements
+
+Version tw-0.8.12-18 (2023-8-10)
+========================
+ * IMPROVED: redone error response (mk 3)
+ * IMPROVED: UI lanelines are now always white (for better visibility)
+ * FIXED: UI metrics persist across drives correctly (if not, let me know how to reproduce it not working)
+
+Version tw-0.8.12-17 (2023-4-30--6-06)
 ========================
  * ATTENTION!!! OpenStreetMap-based features must not be used unless you have an external hotspot or your own sim card for data.
    * After this update, you need to DISABLE TURN SPEED CONTROLLER AND SPEED LIMIT CONTROL AND THEN RESTART YOUR DEVICE!!!

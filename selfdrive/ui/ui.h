@@ -390,6 +390,8 @@ typedef struct UIScene {
   float lane_pos_dist_last_t = 0.;
   float lane_pos_max_steer_deg = 150.;
   bool auto_lane_pos_active = false;
+
+  float lat_accel = 0.0;
   
   Rect wheel_touch_rect;
   bool wheel_rotates = true;
@@ -558,6 +560,7 @@ typedef struct UIScene {
   line_vertices_data lane_vertices_left, lane_vertices_right;
 
   bool dm_active, engageable;
+  bool low_overhead_mode;
 
   // lead
   vertex_data lead_vertices[2];

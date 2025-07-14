@@ -318,6 +318,7 @@ static void update_state(UIState *s) {
   
   if (t - scene.paramsCheckLast > scene.paramsCheckFreq){
     scene.paramsCheckLast = t;
+    scene.low_overhead_mode = Params().getBool("LowOverheadMode");
     scene.auto_brightness_enabled = Params().getBool("AutoBrightness");
     scene.show_cur_speed = Params().getBool("PrintCurrentSpeed");
     scene.disableDisengageOnGasEnabled = Params().getBool("DisableDisengageOnGas");
@@ -419,14 +420,17 @@ static void update_state(UIState *s) {
     const int center_y = offset_button_y(s, s->fb_h - footer_h / 2, radius);
     scene.screen_dim_touch_rect = {center_x - (1+scene.screen_dim_mode_max-scene.screen_dim_mode) * radius, center_y - (1+scene.screen_dim_mode_max-scene.screen_dim_mode) * radius, (2*(1+scene.screen_dim_mode_max-scene.screen_dim_mode)) * radius, (2*(1+scene.screen_dim_mode_max-scene.screen_dim_mode)) * radius};
     
-    if (s->status == STATUS_WARNING){
+    if (s->status == STATUS_WARNING && scene.screen_dim_mode_cur == 0){
       scene.screen_dim_mode_cur = scene.screen_dim_mode + 1;
       if (scene.screen_dim_mode_cur > scene.screen_dim_mode_max){
         scene.screen_dim_mode_cur = scene.screen_dim_mode_max;
       }
     }
     else if (s->status == STATUS_ALERT){
-      scene.screen_dim_mode_cur = scene.screen_dim_mode_max;
+      scene.screen_dim_mode_cur = scene.screen_dim_mode + 1;
+      if (scene.screen_dim_mode_cur > scene.screen_dim_mode_max){
+        scene.screen_dim_mode_cur = scene.screen_dim_mode_max;
+      }
       scene.screen_dim_fade = scene.screen_dim_modes_v[scene.screen_dim_mode_cur];
     }
     else{
@@ -711,6 +715,8 @@ static void update_state(UIState *s) {
       scene.lead_y_vals.clear();
     }
     if (scene.adjacent_lead_info_print_enabled){
+      scene.adjacent_lead_left_ttp_str = "";
+      scene.adjacent_lead_right_ttp_str = "";
       if (!scene.adjacent_lead_info_print_at_lead){
         // left leads
         {
@@ -724,7 +730,6 @@ static void update_state(UIState *s) {
           scene.adjacent_leads_left_str = "";
           char val[16];
           int cnt = 0;
-          scene.adjacent_lead_left_ttp_str = "";
           for (int i = 0; i < leads_vec.size(); ++i){
             if (i == 0 && leads_vec[i].getVRel() < 0.0 && leads_vec[i].getVLead() > 0.0){
               float const v = leads_vec[i].getVRel();
@@ -758,7 +763,6 @@ static void update_state(UIState *s) {
           scene.adjacent_leads_right_str = "";
           char val[16];
           int cnt = 0;
-          scene.adjacent_lead_right_ttp_str = "";
           for (int i = 0; i < leads_vec.size(); ++i){
             if (i == 0 && leads_vec[i].getVRel() < 0.0 && leads_vec[i].getVLead() > 0.0){
               float const v = leads_vec[i].getVRel();
@@ -887,6 +891,7 @@ static void update_state(UIState *s) {
   if (sm.updated("liveLocationKalman")) {
     scene.gpsOK = sm["liveLocationKalman"].getLiveLocationKalman().getGpsOK();
     scene.device_roll = sm["liveLocationKalman"].getLiveLocationKalman().getCalibratedOrientationNED().getValue()[0];
+    scene.lat_accel = 0.9 * scene.lat_accel + 0.1 * sm["liveLocationKalman"].getLiveLocationKalman().getAccelerationCalibrated().getValue()[1];
   }
   if (sm.updated("lateralPlan")) {
     scene.lateral_plan = sm["lateralPlan"].getLateralPlan();
